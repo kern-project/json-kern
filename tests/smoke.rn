@@ -1,35 +1,223 @@
-//! Smoke tests for the initial borrowed JSON parser.
+//! Smoke tests for borrowed JSON parsing and compact rendering.
 
 use base.test;
 use json;
 use std.io;
 
-fn check_bool() void {
+fn check_scalars() void {
     let t = test.report(io.stderr())..&;
-    let value = "true".parse_json()
-        .should_ok()
-        .sum(@loc(), t);
 
-    value.bool_value()
+    " null "
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t)
+        .is_null()
+        .should()
+        .sum(@loc(), t);
+    "true".parse_json()
+        .should_ok()
+        .sum(@loc(), t)
+        .bool_value()
         .should_some()
         .sum(@loc(), t)
         .should()
         .sum(@loc(), t);
-}
-
-fn check_null() void {
-    let t = test.report(io.stderr())..&;
-    let value = " null ".parse_json()
+    "false".parse_json()
         .should_ok()
+        .sum(@loc(), t)
+        .bool_value()
+        .should_some()
+        .sum(@loc(), t)
+        .not()
+        .should()
         .sum(@loc(), t);
 
-    value.is_null()
+    let number = "-12345"
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    number
+        .number_text()
+        .should_some()
+        .sum(@loc(), t)
         .should()
+        .eq("-12345")
+        .sum(@loc(), t);
+    number
+        .i64_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq(i64.{-12345})
+        .sum(@loc(), t);
+
+    let string = "\"kern\\n\""
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    string
+        .string_raw()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq("kern\\n")
+        .sum(@loc(), t);
+}
+
+fn check_array_cursor() void {
+    let t = test.report(io.stderr())..&;
+    let value = "[1,true,{\"name\":\"kern\"}]"
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    let cursor = value.array().should_some().sum(@loc(), t)..&;
+
+    let first = cursor
+        .next()
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    first
+        .i64_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq(i64.{1})
+        .sum(@loc(), t);
+    let second = cursor
+        .next()
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    second
+        .bool_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    let object = cursor
+        .next()
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    object.kind
+        .should()
+        .eq(json.Kind.Object)
+        .sum(@loc(), t);
+    cursor
+        .next()
+        .should_ok()
+        .sum(@loc(), t)
+        .should_none()
+        .sum(@loc(), t);
+}
+
+fn check_object_cursor_and_lookup() void {
+    let t = test.report(io.stderr())..&;
+    let value = "{\"name\":\"kern\",\"version\":7,\"name\":\"second\"}"
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    let cursor = value.object().should_some().sum(@loc(), t)..&;
+
+    let entry = cursor
+        .next()
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    entry.key_text
+        .should()
+        .eq("name")
+        .sum(@loc(), t);
+    entry.value
+        .string_raw()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq("kern")
+        .sum(@loc(), t);
+
+    let lookup = value.object().should_some().sum(@loc(), t)..&;
+    let found = lookup
+        .find("name")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    found
+        .string_raw()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq("kern")
+        .sum(@loc(), t);
+}
+
+fn check_parse_errors() void {
+    let t = test.report(io.stderr())..&;
+
+    ""
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.EmptyInput)
+        .sum(@loc(), t);
+    "true false"
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.{ TrailingData: 5 })
+        .sum(@loc(), t);
+    "[1 2]"
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.{ MissingCommaOrEnd: 3 })
+        .sum(@loc(), t);
+    "{\"a\" 1}"
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.{ MissingColon: 5 })
+        .sum(@loc(), t);
+    "\"\\x\""
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.{ InvalidEscape: 2 })
+        .sum(@loc(), t);
+    "01"
+        .validate_json()
+        .should_err()
+        .eq(json.ParseError.{ InvalidNumber: 1 })
+        .sum(@loc(), t);
+}
+
+fn check_compact_render() void {
+    let t = test.report(io.stderr())..&;
+    let mut out = [64]u8.{undef};
+
+    let written = "{ \"name\" : \"kern vm\", \"ok\" : true }"
+        .render_json_compact(out..&[0 .. 64])
+        .should_ok()
+        .sum(@loc(), t);
+    out.&[0 .. written]
+        .should()
+        .eq("{\"name\":\"kern vm\",\"ok\":true}")
+        .sum(@loc(), t);
+
+    let mut short = [4]u8.{0, 0, 0, 0};
+    "[1,2,3]"
+        .render_json_compact(short..&[0 .. 4])
+        .should_err()
+        .eq(json.RenderError.ShortOutput)
         .sum(@loc(), t);
 }
 
 fn main() i32 {
-    check_bool();
-    check_null();
+    check_scalars();
+    check_array_cursor();
+    check_object_cursor_and_lookup();
+    check_parse_errors();
+    check_compact_render();
     return 0;
 }

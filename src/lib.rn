@@ -1,8 +1,12 @@
-//! JSON parsing, decoding, document, and rendering utilities for Kern.
+//! JSON parsing, borrowed traversal, and compact rendering utilities for Kern.
 //!
-//! `json-kern` is being rebuilt as a standalone package. The public shape will
-//! start with allocation-free borrowed values and grow into owned document
-//! handles whose storage strategy is internal to the package.
+//! The first layer is allocation-free. `Value` borrows the original input, and
+//! array/object cursors advance through the borrowed JSON text without building
+//! a node tree. This keeps validation and protocol-field extraction fast and
+//! predictable. Owned documents are built on top of this borrowed layer.
+
+use base.io.{Formatable, Write};
+use base.num.Parse;
 
 /// JSON value categories.
 pub enum Kind {
@@ -22,11 +26,32 @@ pub enum ParseError {
     UnexpectedByte: usize,
     /// The input ended before the current value was complete.
     UnexpectedEof,
+    /// A JSON number does not follow the JSON grammar.
+    InvalidNumber: usize,
+    /// A JSON string contains an invalid escape sequence.
+    InvalidEscape: usize,
+    /// A JSON string ended before its closing quote.
+    UnterminatedString: usize,
+    /// An object entry is missing `:`.
+    MissingColon: usize,
+    /// An array or object is missing `,` or its closing delimiter.
+    MissingCommaOrEnd: usize,
     /// Extra non-whitespace bytes followed a complete value.
     TrailingData: usize,
 };
 
+/// Rendering failures for compact JSON output.
+pub enum RenderError {
+    /// The source text is not a complete valid JSON document.
+    Parse: ParseError,
+    /// The caller-provided output buffer is too small.
+    ShortOutput,
+};
+
 /// Borrowed JSON value view.
+///
+/// `raw` covers exactly the bytes for this value, excluding leading or trailing
+/// whitespace around a complete document.
 pub struct Value {
     /// Value kind.
     pub kind: Kind,
@@ -34,66 +59,401 @@ pub struct Value {
     pub raw: &[u8],
 };
 
+/// Borrowed array cursor.
+///
+/// Each `next()` call returns the next borrowed value and advances the cursor.
+pub struct ArrayCursor {
+    data: &[u8],
+    index: usize = 0,
+    first: bool = true,
+    done: bool = false,
+};
+
+/// Borrowed object entry.
+pub struct ObjectEntry {
+    /// Raw quoted key, including the surrounding quotes.
+    pub key_raw: &[u8],
+    /// Raw key bytes inside the quotes. Escape sequences are not decoded.
+    pub key_text: &[u8],
+    /// Borrowed value for this entry.
+    pub value: Value,
+};
+
+/// Borrowed object cursor.
+///
+/// Duplicate keys are preserved by iteration. Lookup helpers return the first
+/// matching raw key.
+pub struct ObjectCursor {
+    data: &[u8],
+    index: usize = 0,
+    first: bool = true,
+    done: bool = false,
+};
+
+impl &ParseError : Formatable {
+    /// Writes a stable diagnostic name for the parse error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .EmptyInput => _ = writer.write("json.ParseError.EmptyInput"),
+            .{ UnexpectedByte: offset } => {
+                _ = "json.ParseError.UnexpectedByte({})".fmt(.{offset}).write_to(writer);
+            },
+            .UnexpectedEof => _ = writer.write("json.ParseError.UnexpectedEof"),
+            .{ InvalidNumber: offset } => {
+                _ = "json.ParseError.InvalidNumber({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ InvalidEscape: offset } => {
+                _ = "json.ParseError.InvalidEscape({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ UnterminatedString: offset } => {
+                _ = "json.ParseError.UnterminatedString({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ MissingColon: offset } => {
+                _ = "json.ParseError.MissingColon({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ MissingCommaOrEnd: offset } => {
+                _ = "json.ParseError.MissingCommaOrEnd({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ TrailingData: offset } => {
+                _ = "json.ParseError.TrailingData({})".fmt(.{offset}).write_to(writer);
+            },
+        }
+    }
+}
+
+impl &RenderError : Formatable {
+    /// Writes a stable diagnostic name for the render error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .ShortOutput => _ = writer.write("json.RenderError.ShortOutput"),
+            .{ Parse: err } => {
+                _ = writer.write("json.RenderError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
+impl ParseError : Eq[ParseError] {
+    /// Compares parse error variants and offsets exactly.
+    pub fn eq(other: ParseError) bool {
+        return match (self) {
+            .EmptyInput => match (other) { .EmptyInput => true, _ => false },
+            .UnexpectedEof => match (other) { .UnexpectedEof => true, _ => false },
+            .{ UnexpectedByte: a } => match (other) {
+                .{ UnexpectedByte: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidNumber: a } => match (other) {
+                .{ InvalidNumber: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidEscape: a } => match (other) {
+                .{ InvalidEscape: b } => a == b,
+                _ => false,
+            },
+            .{ UnterminatedString: a } => match (other) {
+                .{ UnterminatedString: b } => a == b,
+                _ => false,
+            },
+            .{ MissingColon: a } => match (other) {
+                .{ MissingColon: b } => a == b,
+                _ => false,
+            },
+            .{ MissingCommaOrEnd: a } => match (other) {
+                .{ MissingCommaOrEnd: b } => a == b,
+                _ => false,
+            },
+            .{ TrailingData: a } => match (other) {
+                .{ TrailingData: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl RenderError : Eq[RenderError] {
+    /// Compares render error variants and nested parse errors exactly.
+    pub fn eq(other: RenderError) bool {
+        return match (self) {
+            .ShortOutput => match (other) { .ShortOutput => true, _ => false },
+            .{ Parse: a } => match (other) {
+                .{ Parse: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+fn is_ws(byte: u8) bool {
+    return byte == b' '
+        or byte == b'\n'
+        or byte == b'\r'
+        or byte == b'\t';
+}
+
+// JSON grammar only permits decimal digits in numbers and hex digits in
+// `\uXXXX` string escapes.
+fn is_digit(byte: u8) bool {
+    return byte >= b'0' and byte <= b'9';
+}
+
+fn is_hex(byte: u8) bool {
+    return (byte >= b'0' and byte <= b'9')
+        or (byte >= b'a' and byte <= b'f')
+        or (byte >= b'A' and byte <= b'F');
+}
+
 fn skip_ws(text: &[u8], start: usize) usize {
     let mut i = start;
-    while (i < #text) {
-        let byte = text.[i];
-        if (byte != b' ' and byte != b'\n' and byte != b'\r' and byte != b'\t') {
-            return i;
-        }
+    // Whitespace skipping is a sentinel scan over bytes, not a whole-slice visit.
+    while (i < #text and is_ws(text.[i])) {
         i += 1;
     }
     return i;
 }
 
 fn bytes_eq(lhs: &[u8], rhs: &[u8]) bool {
-    if (#lhs != #rhs) {
-        return false;
-    }
-    let mut i = 0;
+    if (#lhs != #rhs) return false;
+    let mut i = usize.{0};
+    // Stop on the first mismatch so literal/key checks stay cheap.
     while (i < #lhs) {
-        if (lhs.[i] != rhs.[i]) {
-            return false;
-        }
+        if (lhs.[i] != rhs.[i]) return false;
         i += 1;
     }
     return true;
 }
 
-fn literal(
+fn literal_end(
     text: &[u8],
     start: usize,
     word: &[u8],
-    kind: Kind,
-) Value!ParseError {
-    if (#text - start < #word) {
-        return .{ Err: .UnexpectedEof };
-    }
+) usize!ParseError {
+    if (#text - start < #word) return .{ Err: .UnexpectedEof };
     if (!bytes_eq(text.&[start .. start + #word], word)) {
         return .{ Err: .{ UnexpectedByte: start } };
     }
-    return .{ Ok: .{ kind: kind, raw: text.&[start .. start + #word] } };
+    return .{ Ok: start + #word };
+}
+
+fn string_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = start + 1;
+    while (i < #text) {
+        let byte = text.[i];
+        if (byte == b'"') return .{ Ok: i + 1 };
+        if (byte < 0x20) return .{ Err: .{ InvalidEscape: i } };
+        if (byte != b'\\') {
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        match (text.[i]) {
+            b'"' => {},
+            b'\\' => {},
+            b'/' => {},
+            b'b' => {},
+            b'f' => {},
+            b'n' => {},
+            b'r' => {},
+            b't' => {},
+            b'u' => {
+                if (i + 4 >= #text) return .{ Err: .UnexpectedEof };
+                let mut j = usize.{0};
+                while (j < 4) {
+                    if (!is_hex(text.[i + 1 + j])) {
+                        return .{ Err: .{ InvalidEscape: i + 1 + j } };
+                    }
+                    j += 1;
+                }
+                i += 4;
+            },
+            _ => return .{ Err: .{ InvalidEscape: i } },
+        }
+        i += 1;
+    }
+    return .{ Err: .{ UnterminatedString: start } };
+}
+
+fn number_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = start;
+    if (text.[i] == b'-') {
+        i += 1;
+        if (i >= #text) return .{ Err: .{ InvalidNumber: start } };
+    }
+
+    if (text.[i] == b'0') {
+        i += 1;
+        if (i < #text and is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+    } else if (text.[i] >= b'1' and text.[i] <= b'9') {
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    } else {
+        return .{ Err: .{ InvalidNumber: i } };
+    }
+
+    if (i < #text and text.[i] == b'.') {
+        i += 1;
+        if (i >= #text or !is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    }
+
+    if (i < #text and (text.[i] == b'e' or text.[i] == b'E')) {
+        i += 1;
+        if (i < #text and (text.[i] == b'+' or text.[i] == b'-')) {
+            i += 1;
+        }
+        if (i >= #text or !is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    }
+
+    return .{ Ok: i };
+}
+
+fn value_end(text: &[u8], start: usize) usize!ParseError {
+    if (start >= #text) return .{ Err: .UnexpectedEof };
+    return match (text.[start]) {
+        b'n' => literal_end(text, start, "null"),
+        b't' => literal_end(text, start, "true"),
+        b'f' => literal_end(text, start, "false"),
+        b'"' => string_end(text, start),
+        b'[' => array_end(text, start),
+        b'{' => object_end(text, start),
+        b'-' => number_end(text, start),
+        b'0' => number_end(text, start),
+        b'1' => number_end(text, start),
+        b'2' => number_end(text, start),
+        b'3' => number_end(text, start),
+        b'4' => number_end(text, start),
+        b'5' => number_end(text, start),
+        b'6' => number_end(text, start),
+        b'7' => number_end(text, start),
+        b'8' => number_end(text, start),
+        b'9' => number_end(text, start),
+        _ => .{ Err: .{ UnexpectedByte: start } },
+    };
+}
+
+fn array_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = skip_ws(text, start + 1);
+    if (i >= #text) return .{ Err: .UnexpectedEof };
+    if (text.[i] == b']') return .{ Ok: i + 1 };
+
+    while (true) {
+        let end = value_end(text, i).!;
+        i = skip_ws(text, end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] == b']') return .{ Ok: i + 1 };
+        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+        i = skip_ws(text, i + 1);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+    }
+    return .{ Err: .UnexpectedEof };
+}
+
+fn object_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = skip_ws(text, start + 1);
+    if (i >= #text) return .{ Err: .UnexpectedEof };
+    if (text.[i] == b'}') return .{ Ok: i + 1 };
+
+    while (true) {
+        if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+        let key_end = string_end(text, i).!;
+        i = skip_ws(text, key_end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] != b':') return .{ Err: .{ MissingColon: i } };
+        i = skip_ws(text, i + 1);
+        let val_end = value_end(text, i).!;
+        i = skip_ws(text, val_end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] == b'}') return .{ Ok: i + 1 };
+        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+        i = skip_ws(text, i + 1);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+    }
+    return .{ Err: .UnexpectedEof };
+}
+
+fn kind_from_first(byte: u8) Kind {
+    return match (byte) {
+        b'n' => .Null,
+        b't' => .Bool,
+        b'f' => .Bool,
+        b'"' => .String,
+        b'[' => .Array,
+        b'{' => .Object,
+        _ => .Number,
+    };
+}
+
+fn parse_at(text: &[u8], start: usize) Value!ParseError {
+    let end = value_end(text, start).!;
+    return .{ Ok: .{ kind: kind_from_first(text.[start]), raw: text.&[start .. end] } };
 }
 
 /// Parses one complete borrowed JSON value.
 pub fn parse(text: &[u8]) Value!ParseError {
     let start = skip_ws(text, 0);
-    if (start >= #text) {
-        return .{ Err: .EmptyInput };
-    }
+    if (start >= #text) return .{ Err: .EmptyInput };
 
-    let value = match (text.[start]) {
-        b'n' => literal(text, start, "null", .Null).!,
-        b't' => literal(text, start, "true", .Bool).!,
-        b'f' => literal(text, start, "false", .Bool).!,
-        _ => return .{ Err: .{ UnexpectedByte: start } },
-    };
-
+    let value = parse_at(text, start).!;
     let end = skip_ws(text, start + #value.raw);
-    if (end != #text) {
-        return .{ Err: .{ TrailingData: end } };
-    }
+    if (end != #text) return .{ Err: .{ TrailingData: end } };
     return .{ Ok: value };
+}
+
+/// Validates one complete JSON document.
+pub fn validate(text: &[u8]) void!ParseError {
+    _ = parse(text).!;
+    return .{ Ok: {} };
+}
+
+/// Renders valid JSON as compact JSON into `out`.
+///
+/// The return value is the number of bytes written. String contents are copied
+/// exactly as written; whitespace outside strings is removed.
+pub fn render_compact(text: &[u8], out: &mut [u8]) usize!RenderError {
+    validate(text).map_err([](err: ParseError) RenderError { return .{ Parse: err }; }).!;
+
+    let mut src = usize.{0};
+    let mut dst = usize.{0};
+    let mut in_string = false;
+    // Rendering tracks string state and output position, so it is a stateful scan.
+    while (src < #text) {
+        let byte = text.[src];
+        if (!in_string and is_ws(byte)) {
+            src += 1;
+            continue;
+        }
+        if (dst >= #out) return .{ Err: .ShortOutput };
+        out.[dst] = byte;
+        dst += 1;
+
+        if (byte == b'"') {
+            in_string = !in_string;
+        } else if (in_string and byte == b'\\') {
+            src += 1;
+            if (src >= #text) return .{ Err: .{ Parse: .UnexpectedEof } };
+            if (dst >= #out) return .{ Err: .ShortOutput };
+            out.[dst] = text.[src];
+            dst += 1;
+        }
+        src += 1;
+    }
+    return .{ Ok: dst };
 }
 
 impl &[u8] {
@@ -104,8 +464,12 @@ impl &[u8] {
 
     /// Validates this byte slice as one complete JSON value.
     pub fn validate_json() void!ParseError {
-        _ = parse(self).!;
-        return .{ Ok: {} };
+        return validate(self);
+    }
+
+    /// Renders this JSON document compactly into `out`.
+    pub fn render_json_compact(out: &mut [u8]) usize!RenderError {
+        return render_compact(self, out);
     }
 }
 
@@ -117,9 +481,106 @@ impl Value {
 
     /// Returns the boolean value, or `None` when this is not a boolean.
     pub fn bool_value() ?bool {
-        if (self.kind != .Bool) {
-            return .None;
-        }
+        if (self.kind != .Bool) return .None;
         return .{ Some: bytes_eq(self.raw, "true") };
+    }
+
+    /// Returns raw number text, or `None` when this is not a number.
+    pub fn number_text() ?&[u8] {
+        if (self.kind != .Number) return .None;
+        return .{ Some: self.raw };
+    }
+
+    /// Parses an integer number as `i64`.
+    ///
+    /// Fractional and exponent forms are rejected by the integer parser.
+    pub fn i64_value() ?i64 {
+        if (self.kind != .Number) return .None;
+        let .{ Ok: value } = self.raw.parse[i64]() else return .None;
+        return .{ Some: value };
+    }
+
+    /// Returns raw string contents without the surrounding quotes.
+    pub fn string_raw() ?&[u8] {
+        if (self.kind != .String) return .None;
+        return .{ Some: self.raw.&[1 .. #self.raw - 1] };
+    }
+
+    /// Returns an array cursor, or `None` when this is not an array.
+    pub fn array() ?ArrayCursor {
+        if (self.kind != .Array) return .None;
+        return .{ Some: .{ data: self.raw.&[1 .. #self.raw - 1] } };
+    }
+
+    /// Returns an object cursor, or `None` when this is not an object.
+    pub fn object() ?ObjectCursor {
+        if (self.kind != .Object) return .None;
+        return .{ Some: .{ data: self.raw.&[1 .. #self.raw - 1] } };
+    }
+
+    /// Renders this borrowed value compactly into `out`.
+    pub fn render_compact(out: &mut [u8]) usize!RenderError {
+        return render_compact(self.raw, out);
+    }
+}
+
+impl &mut ArrayCursor {
+    /// Returns the next array value.
+    pub fn next() ?Value!ParseError {
+        if (self.done) return .{ Ok: .None };
+        let mut i = skip_ws(self.data, self.index);
+        if (i >= #self.data) {
+            self.done = true;
+            return .{ Ok: .None };
+        }
+        if (!self.first) {
+            if (self.data.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+            i = skip_ws(self.data, i + 1);
+        }
+
+        let value = parse_at(self.data, i).!;
+        self.index = i + #value.raw;
+        self.first = false;
+        return .{ Ok: .{ Some: value } };
+    }
+}
+
+impl &mut ObjectCursor {
+    /// Returns the next object entry.
+    pub fn next() ?ObjectEntry!ParseError {
+        if (self.done) return .{ Ok: .None };
+        let mut i = skip_ws(self.data, self.index);
+        if (i >= #self.data) {
+            self.done = true;
+            return .{ Ok: .None };
+        }
+        if (!self.first) {
+            if (self.data.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+            i = skip_ws(self.data, i + 1);
+        }
+
+        if (i >= #self.data) return .{ Err: .UnexpectedEof };
+        if (self.data.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+        let key_end = string_end(self.data, i).!;
+        let key_raw = self.data.&[i .. key_end];
+        let key_text = self.data.&[i + 1 .. key_end - 1];
+        i = skip_ws(self.data, key_end);
+        if (i >= #self.data) return .{ Err: .UnexpectedEof };
+        if (self.data.[i] != b':') return .{ Err: .{ MissingColon: i } };
+        i = skip_ws(self.data, i + 1);
+        let value = parse_at(self.data, i).!;
+        self.index = i + #value.raw;
+        self.first = false;
+        return .{ Ok: .{ Some: .{ key_raw: key_raw, key_text: key_text, value: value } } };
+    }
+
+    /// Returns the first entry whose raw key text matches `key`.
+    pub fn find(key: &[u8]) ?Value!ParseError {
+        while (true) {
+            let next = self.next().!;
+            let .{ Some: entry } = next else return .{ Ok: .None };
+            if (bytes_eq(entry.key_text, key)) return .{ Ok: .{ Some: entry.value } };
+        }
+        return .{ Ok: .None };
     }
 }

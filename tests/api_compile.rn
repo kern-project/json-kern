@@ -4,13 +4,34 @@ use json;
 
 enum AppError {
     Parse: json.ParseError,
+    Render: json.RenderError,
 }
 
 fn app() void!AppError {
-    let .{ Ok: value } = "true".parse_json() else {
+    let .{ Ok: value } = "{\"name\":\"kern\",\"enabled\":true}".parse_json() else {
         .{ Err: err } => return .{ Err: .{ Parse: err } },
     };
-    _ = value;
+
+    let .{ Some: object0 } = value.object() else {
+        return .{ Err: .{ Parse: .EmptyInput } };
+    };
+    let mut object = object0;
+    let lookup = object..&;
+    let .{ Ok: enabled } = lookup.find("enabled") else {
+        .{ Err: err } => return .{ Err: .{ Parse: err } },
+    };
+    let .{ Some: flag } = enabled else return .{ Err: .{ Parse: .EmptyInput } };
+    let .{ Some: enabled_flag } = flag.bool_value() else {
+        return .{ Err: .{ Parse: .EmptyInput } };
+    };
+    if (!enabled_flag) {
+        return .{ Err: .{ Parse: .EmptyInput } };
+    }
+
+    let mut out = [32]u8.{undef};
+    _ = value.render_compact(out..&[0 .. 32])
+        .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
+        .!;
     return .{ Ok: {} };
 }
 
