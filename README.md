@@ -3,9 +3,10 @@
 JSON parsing, borrowed traversal, and compact rendering utilities for Kern.
 
 The Craft package name is `json`; the repository name is `json-kern`. The
-current public surface is the fast borrowed layer: parsing and validation do
-not allocate, `Value` borrows the original input, and array/object cursors walk
-the source text directly. Owned document editing will build on this layer.
+current public surface starts with the fast borrowed layer: parsing and
+validation do not allocate, `Value` borrows the original input, and
+array/object cursors walk the source text directly. `Document` owns one compact
+JSON buffer and exposes borrowed root views from that storage.
 
 ## Usage
 
@@ -23,6 +24,8 @@ json = { path = "../json-kern" }
 
 ```kern
 use json;
+use base.mem.alloc.gpa;
+use sys.mem.page;
 
 enum AppError {
     Parse: json.ParseError,
@@ -56,6 +59,15 @@ fn app() void!AppError {
     _ = root.render_compact(out..&[0 .. 32])
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
+
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    let doc = root.clone_document(alloc)
+        .map_err([](_: json.DocumentError) AppError {
+            return .{ Render: .{ Parse: .EmptyInput } };
+        })
+        .!;
+    defer doc..&.deinit(alloc);
     return .{ Ok: {} };
 }
 ```
@@ -72,6 +84,11 @@ fn app() void!AppError {
   preserved by cursor iteration.
 - `value.render_compact(out)` and `source.render_json_compact(out)` write
   compact JSON into caller-owned output.
+- `value.clone_document(alloc)` and `source.parse_json_document(alloc)` build
+  an owned compact `Document`.
+- `document.root()` returns a borrowed view over the owned compact storage.
+- `document.replace_root_json(alloc, text)` validates and replaces the whole
+  document root.
 
 String APIs currently expose raw string contents. Escape decoding into caller
 storage is planned for the next layer so callers can choose allocation and

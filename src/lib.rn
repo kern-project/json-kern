@@ -6,6 +6,8 @@
 //! predictable. Owned documents are built on top of this borrowed layer.
 
 use base.io.{Formatable, Write};
+use base.coll.String;
+use base.mem.alloc.{AllocError, Allocator};
 use base.num.Parse;
 
 /// JSON value categories.
@@ -48,6 +50,18 @@ pub enum RenderError {
     ShortOutput,
 };
 
+/// Owned document failures.
+pub enum DocumentError {
+    /// Source text is not a complete valid JSON document.
+    Parse: ParseError,
+    /// Rendering or replacement could not fit in the requested destination.
+    Render: RenderError,
+    /// Capacity arithmetic overflowed while growing owned storage.
+    CapacityOverflow,
+    /// The allocator could not satisfy an owned storage request.
+    OutOfMemory,
+};
+
 /// Borrowed JSON value view.
 ///
 /// `raw` covers exactly the bytes for this value, excluding leading or trailing
@@ -57,6 +71,17 @@ pub struct Value {
     pub kind: Kind,
     /// Raw bytes covering the value.
     pub raw: &[u8],
+};
+
+/// Owned compact JSON document.
+///
+/// `Document` owns one compact JSON text buffer. Traversal still uses borrowed
+/// `Value` views derived from the document storage, so ordinary reads stay
+/// allocation-free after construction. Mutation is intentionally coarse for the
+/// first owned layer: replace the root with a complete JSON value, then add
+/// finer object/array mutation once the handle model is stable.
+pub struct Document {
+    storage: String = String.{},
 };
 
 /// Borrowed array cursor.
@@ -135,6 +160,26 @@ impl &RenderError : Formatable {
     }
 }
 
+impl &DocumentError : Formatable {
+    /// Writes a stable diagnostic name for the document error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .CapacityOverflow => _ = writer.write("json.DocumentError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.DocumentError.OutOfMemory"),
+            .{ Parse: err } => {
+                _ = writer.write("json.DocumentError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+            .{ Render: err } => {
+                _ = writer.write("json.DocumentError.Render(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
 impl ParseError : Eq[ParseError] {
     /// Compares parse error variants and offsets exactly.
     pub fn eq(other: ParseError) bool {
@@ -184,6 +229,31 @@ impl RenderError : Eq[RenderError] {
             },
         };
     }
+}
+
+fn wrap_alloc_error(err: AllocError) DocumentError {
+    return match (err) {
+        .CapacityOverflow => .CapacityOverflow,
+        .OutOfMemory => .OutOfMemory,
+    };
+}
+
+fn compact_into(
+    storage: &mut String,
+    alloc: &mut Allocator,
+    text: &[u8],
+) void!DocumentError {
+    validate(text).map_err([](err: ParseError) DocumentError { return .{ Parse: err }; }).!;
+
+    storage.clear();
+    let out = storage.try_append_uninit(alloc, #text)
+        .map_err(wrap_alloc_error)
+        .!;
+    let written = render_compact(text, out)
+        .map_err([](err: RenderError) DocumentError { return .{ Render: err }; })
+        .!;
+    storage.truncate(written);
+    return .{ Ok: {} };
 }
 
 fn is_ws(byte: u8) bool {
@@ -456,6 +526,14 @@ pub fn render_compact(text: &[u8], out: &mut [u8]) usize!RenderError {
     return .{ Ok: dst };
 }
 
+/// Parses and owns a compact JSON document.
+pub fn parse_document(alloc: &mut Allocator, text: &[u8]) Document!DocumentError {
+    let value = parse(text)
+        .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
+        .!;
+    return value.clone_document(alloc);
+}
+
 impl &[u8] {
     /// Parses this byte slice as one complete JSON value.
     pub fn parse_json() Value!ParseError {
@@ -470,6 +548,11 @@ impl &[u8] {
     /// Renders this JSON document compactly into `out`.
     pub fn render_json_compact(out: &mut [u8]) usize!RenderError {
         return render_compact(self, out);
+    }
+
+    /// Parses and owns this byte slice as a compact document.
+    pub fn parse_json_document(alloc: &mut Allocator) Document!DocumentError {
+        return parse_document(alloc, self);
     }
 }
 
@@ -521,6 +604,46 @@ impl Value {
     /// Renders this borrowed value compactly into `out`.
     pub fn render_compact(out: &mut [u8]) usize!RenderError {
         return render_compact(self.raw, out);
+    }
+
+    /// Clones this borrowed value into an owned compact document.
+    pub fn clone_document(alloc: &mut Allocator) Document!DocumentError {
+        let mut doc = Document.{};
+        compact_into(doc.storage..&, alloc, self.raw).!;
+        return .{ Ok: doc };
+    }
+}
+
+impl &Document {
+    /// Returns the compact document text.
+    pub fn as_json() &[u8] {
+        return self.storage.&.as_str();
+    }
+
+    /// Returns the root value borrowed from this document.
+    pub fn root() Value {
+        let .{ Ok: value } = parse(self.as_json()) else {
+            @trap();
+        };
+        return value;
+    }
+}
+
+impl &mut Document {
+    /// Releases owned document storage.
+    pub fn deinit(alloc: &mut Allocator) void {
+        self.storage..&.deinit(alloc);
+        self.* = Document.{};
+    }
+
+    /// Replaces the root with a complete borrowed JSON value.
+    pub fn replace_root(alloc: &mut Allocator, value: Value) void!DocumentError {
+        return compact_into(self.storage..&, alloc, value.raw);
+    }
+
+    /// Replaces the root with source JSON after validating and compacting it.
+    pub fn replace_root_json(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
+        return compact_into(self.storage..&, alloc, text);
     }
 }
 

@@ -1,8 +1,10 @@
 //! Smoke tests for borrowed JSON parsing and compact rendering.
 
 use base.test;
+use base.mem.alloc.gpa;
 use json;
 use std.io;
+use sys.mem.page;
 
 fn check_scalars() void {
     let t = test.report(io.stderr())..&;
@@ -213,11 +215,53 @@ fn check_compact_render() void {
         .sum(@loc(), t);
 }
 
+fn check_owned_document() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    let doc0 = "{ \"name\" : \"kern\", \"enabled\" : true }"
+        .parse_json_document(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    let mut doc = doc0;
+    defer doc..&.deinit(alloc);
+
+    doc.&.as_json()
+        .should()
+        .eq("{\"name\":\"kern\",\"enabled\":true}")
+        .sum(@loc(), t);
+
+    let root = doc.&.root();
+    let object = root.object().should_some().sum(@loc(), t)..&;
+    let enabled = object
+        .find("enabled")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    enabled
+        .bool_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+
+    doc
+        ..&.replace_root_json(alloc, "[1, 2, 3]")
+        .should_ok()
+        .sum(@loc(), t);
+    doc.&.as_json()
+        .should()
+        .eq("[1,2,3]")
+        .sum(@loc(), t);
+}
+
 fn main() i32 {
     check_scalars();
     check_array_cursor();
     check_object_cursor_and_lookup();
     check_parse_errors();
     check_compact_render();
+    check_owned_document();
     return 0;
 }

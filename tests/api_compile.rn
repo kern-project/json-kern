@@ -1,6 +1,8 @@
 //! Compile-time coverage for README-shaped json flows.
 
 use json;
+use base.mem.alloc.gpa;
+use sys.mem.page;
 
 enum AppError {
     Parse: json.ParseError,
@@ -32,6 +34,17 @@ fn app() void!AppError {
     _ = value.render_compact(out..&[0 .. 32])
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
+
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    let doc0 = value.clone_document(alloc)
+        .map_err([](_: json.DocumentError) AppError {
+            return .{ Render: .{ Parse: .EmptyInput } };
+        })
+        .!;
+    let mut doc = doc0;
+    defer doc..&.deinit(alloc);
+    _ = doc.&.root();
     return .{ Ok: {} };
 }
 
