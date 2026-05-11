@@ -1,0 +1,125 @@
+//! JSON parsing, decoding, document, and rendering utilities for Kern.
+//!
+//! `json-kern` is being rebuilt as a standalone package. The public shape will
+//! start with allocation-free borrowed values and grow into owned document
+//! handles whose storage strategy is internal to the package.
+
+/// JSON value categories.
+pub enum Kind {
+    Null,
+    Bool,
+    Number,
+    String,
+    Array,
+    Object,
+};
+
+/// JSON parse failures with byte offsets.
+pub enum ParseError {
+    /// The input is empty or contains only whitespace.
+    EmptyInput,
+    /// A byte is not valid at this position.
+    UnexpectedByte: usize,
+    /// The input ended before the current value was complete.
+    UnexpectedEof,
+    /// Extra non-whitespace bytes followed a complete value.
+    TrailingData: usize,
+};
+
+/// Borrowed JSON value view.
+pub struct Value {
+    /// Value kind.
+    pub kind: Kind,
+    /// Raw bytes covering the value.
+    pub raw: &[u8],
+};
+
+fn skip_ws(text: &[u8], start: usize) usize {
+    let mut i = start;
+    while (i < #text) {
+        let byte = text.[i];
+        if (byte != b' ' and byte != b'\n' and byte != b'\r' and byte != b'\t') {
+            return i;
+        }
+        i += 1;
+    }
+    return i;
+}
+
+fn bytes_eq(lhs: &[u8], rhs: &[u8]) bool {
+    if (#lhs != #rhs) {
+        return false;
+    }
+    let mut i = 0;
+    while (i < #lhs) {
+        if (lhs.[i] != rhs.[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fn literal(
+    text: &[u8],
+    start: usize,
+    word: &[u8],
+    kind: Kind,
+) Value!ParseError {
+    if (#text - start < #word) {
+        return .{ Err: .UnexpectedEof };
+    }
+    if (!bytes_eq(text.&[start .. start + #word], word)) {
+        return .{ Err: .{ UnexpectedByte: start } };
+    }
+    return .{ Ok: .{ kind: kind, raw: text.&[start .. start + #word] } };
+}
+
+/// Parses one complete borrowed JSON value.
+pub fn parse(text: &[u8]) Value!ParseError {
+    let start = skip_ws(text, 0);
+    if (start >= #text) {
+        return .{ Err: .EmptyInput };
+    }
+
+    let value = match (text.[start]) {
+        b'n' => literal(text, start, "null", .Null).!,
+        b't' => literal(text, start, "true", .Bool).!,
+        b'f' => literal(text, start, "false", .Bool).!,
+        _ => return .{ Err: .{ UnexpectedByte: start } },
+    };
+
+    let end = skip_ws(text, start + #value.raw);
+    if (end != #text) {
+        return .{ Err: .{ TrailingData: end } };
+    }
+    return .{ Ok: value };
+}
+
+impl &[u8] {
+    /// Parses this byte slice as one complete JSON value.
+    pub fn parse_json() Value!ParseError {
+        return parse(self);
+    }
+
+    /// Validates this byte slice as one complete JSON value.
+    pub fn validate_json() void!ParseError {
+        _ = parse(self).!;
+        return .{ Ok: {} };
+    }
+}
+
+impl Value {
+    /// Returns `true` when this value is JSON null.
+    pub fn is_null() bool {
+        return self.kind == .Null;
+    }
+
+    /// Returns the boolean value, or `None` when this is not a boolean.
+    pub fn bool_value() ?bool {
+        if (self.kind != .Bool) {
+            return .None;
+        }
+        return .{ Some: bytes_eq(self.raw, "true") };
+    }
+}

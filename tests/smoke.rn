@@ -1,0 +1,35 @@
+//! Smoke tests for the initial borrowed JSON parser.
+
+use base.test;
+use json;
+use std.io;
+
+fn check_bool() void {
+    let t = test.report(io.stderr())..&;
+    let value = "true".parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+
+    value.bool_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+}
+
+fn check_null() void {
+    let t = test.report(io.stderr())..&;
+    let value = " null ".parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+
+    value.is_null()
+        .should()
+        .sum(@loc(), t);
+}
+
+fn main() i32 {
+    check_bool();
+    check_null();
+    return 0;
+}
