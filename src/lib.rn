@@ -42,6 +42,33 @@ pub enum ParseError {
     TrailingData: usize,
 };
 
+/// JSON string decoding failures.
+///
+/// Offsets are relative to the raw string contents returned by `string_raw()`,
+/// not to the complete source document.
+pub enum StringError {
+    /// The requested value is not a JSON string.
+    NotString,
+    /// The raw string contains a malformed escape sequence.
+    InvalidEscape: usize,
+    /// A `\uXXXX` escape sequence does not form a valid Unicode scalar value.
+    InvalidUnicode: usize,
+    /// The caller-provided output buffer is too small.
+    ShortOutput,
+    /// Capacity arithmetic overflowed while allocating decoded string storage.
+    CapacityOverflow,
+    /// The allocator could not satisfy decoded string storage.
+    OutOfMemory,
+};
+
+/// Object key lookup failures.
+pub enum KeyError {
+    /// Object traversal failed while scanning the borrowed source.
+    Parse: ParseError,
+    /// Object key decoding failed while comparing a JSON key.
+    String: StringError,
+};
+
 /// Rendering failures for compact JSON output.
 pub enum RenderError {
     /// The source text is not a complete valid JSON document.
@@ -146,6 +173,42 @@ impl &ParseError : Formatable {
     }
 }
 
+impl &StringError : Formatable {
+    /// Writes a stable diagnostic name for the string error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .NotString => _ = writer.write("json.StringError.NotString"),
+            .{ InvalidEscape: offset } => {
+                _ = "json.StringError.InvalidEscape({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ InvalidUnicode: offset } => {
+                _ = "json.StringError.InvalidUnicode({})".fmt(.{offset}).write_to(writer);
+            },
+            .ShortOutput => _ = writer.write("json.StringError.ShortOutput"),
+            .CapacityOverflow => _ = writer.write("json.StringError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.StringError.OutOfMemory"),
+        }
+    }
+}
+
+impl &KeyError : Formatable {
+    /// Writes a stable diagnostic name for the key lookup error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .{ Parse: err } => {
+                _ = writer.write("json.KeyError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+            .{ String: err } => {
+                _ = writer.write("json.KeyError.String(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
 impl &RenderError : Formatable {
     /// Writes a stable diagnostic name for the render error.
     pub fn write_to(writer: &mut Write) void {
@@ -231,11 +294,62 @@ impl RenderError : Eq[RenderError] {
     }
 }
 
+impl StringError : Eq[StringError] {
+    /// Compares string error variants and offsets exactly.
+    pub fn eq(other: StringError) bool {
+        return match (self) {
+            .NotString => match (other) { .NotString => true, _ => false },
+            .ShortOutput => match (other) { .ShortOutput => true, _ => false },
+            .CapacityOverflow => match (other) { .CapacityOverflow => true, _ => false },
+            .OutOfMemory => match (other) { .OutOfMemory => true, _ => false },
+            .{ InvalidEscape: a } => match (other) {
+                .{ InvalidEscape: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidUnicode: a } => match (other) {
+                .{ InvalidUnicode: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl KeyError : Eq[KeyError] {
+    /// Compares key lookup error variants exactly.
+    pub fn eq(other: KeyError) bool {
+        return match (self) {
+            .{ Parse: a } => match (other) {
+                .{ Parse: b } => a == b,
+                _ => false,
+            },
+            .{ String: a } => match (other) {
+                .{ String: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+fn wrap_string_alloc_error(err: AllocError) StringError {
+    return match (err) {
+        .CapacityOverflow => .CapacityOverflow,
+        .OutOfMemory => .OutOfMemory,
+    };
+}
+
 fn wrap_alloc_error(err: AllocError) DocumentError {
     return match (err) {
         .CapacityOverflow => .CapacityOverflow,
         .OutOfMemory => .OutOfMemory,
     };
+}
+
+fn wrap_key_parse_error(err: ParseError) KeyError {
+    return .{ Parse: err };
+}
+
+fn wrap_key_string_error(err: StringError) KeyError {
+    return .{ String: err };
 }
 
 fn compact_into(
@@ -273,6 +387,208 @@ fn is_hex(byte: u8) bool {
     return (byte >= b'0' and byte <= b'9')
         or (byte >= b'a' and byte <= b'f')
         or (byte >= b'A' and byte <= b'F');
+}
+
+fn hex_value(byte: u8) u32 {
+    if (byte >= b'0' and byte <= b'9') return (byte - b'0') as u32;
+    if (byte >= b'a' and byte <= b'f') return (byte - b'a') as u32 + u32.{10};
+    return (byte - b'A') as u32 + u32.{10};
+}
+
+fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
+    if (offset + 4 > #raw) return .{ Err: .{ InvalidEscape: offset } };
+    let mut value = u32.{0};
+    let mut i = 0;
+    while (i < 4) {
+        let byte = raw.[offset + i];
+        if (!is_hex(byte)) return .{ Err: .{ InvalidEscape: offset + i } };
+        value = (value << 4) | hex_value(byte);
+        i += 1;
+    }
+    return .{ Ok: value };
+}
+
+fn is_high_surrogate(codepoint: u32) bool {
+    return codepoint >= u32.{0xD800} and codepoint <= u32.{0xDBFF};
+}
+
+fn is_low_surrogate(codepoint: u32) bool {
+    return codepoint >= u32.{0xDC00} and codepoint <= u32.{0xDFFF};
+}
+
+fn is_unicode_scalar(codepoint: u32) bool {
+    return codepoint <= u32.{0x10FFFF}
+        and !is_high_surrogate(codepoint)
+        and !is_low_surrogate(codepoint);
+}
+
+fn utf8_len(codepoint: u32) usize {
+    if (codepoint <= u32.{0x7F}) return 1;
+    if (codepoint <= u32.{0x7FF}) return 2;
+    if (codepoint <= u32.{0xFFFF}) return 3;
+    return 4;
+}
+
+fn write_utf8_codepoint(
+    out: &mut [u8],
+    index: usize,
+    codepoint: u32,
+) usize {
+    if (codepoint <= u32.{0x7F}) {
+        out.[index] = codepoint as u8;
+        return index + 1;
+    }
+    if (codepoint <= u32.{0x7FF}) {
+        out.[index] = (u32.{0xC0} | (codepoint >> 6)) as u8;
+        out.[index + 1] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
+        return index + 2;
+    }
+    if (codepoint <= u32.{0xFFFF}) {
+        out.[index] = (u32.{0xE0} | (codepoint >> 12)) as u8;
+        out.[index + 1] = (u32.{0x80} | ((codepoint >> 6) & u32.{0x3F})) as u8;
+        out.[index + 2] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
+        return index + 3;
+    }
+    out.[index] = (u32.{0xF0} | (codepoint >> 18)) as u8;
+    out.[index + 1] = (u32.{0x80} | ((codepoint >> 12) & u32.{0x3F})) as u8;
+    out.[index + 2] = (u32.{0x80} | ((codepoint >> 6) & u32.{0x3F})) as u8;
+    out.[index + 3] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
+    return index + 4;
+}
+
+fn decode_json_escape(raw: &[u8], slash: usize) u32!StringError {
+    if (slash + 1 >= #raw) return .{ Err: .{ InvalidEscape: slash } };
+    return match (raw.[slash + 1]) {
+        b'"' => .{ Ok: b'"' as u32 },
+        b'\\' => .{ Ok: b'\\' as u32 },
+        b'/' => .{ Ok: b'/' as u32 },
+        b'b' => .{ Ok: u32.{8} },
+        b'f' => .{ Ok: u32.{12} },
+        b'n' => .{ Ok: b'\n' as u32 },
+        b'r' => .{ Ok: b'\r' as u32 },
+        b't' => .{ Ok: b'\t' as u32 },
+        b'u' => decode_hex4(raw, slash + 2),
+        _ => .{ Err: .{ InvalidEscape: slash + 1 } },
+    };
+}
+
+fn decoded_string_len(raw: &[u8]) usize!StringError {
+    let mut i = 0;
+    let mut len = 0;
+    while (i < #raw) {
+        let byte = raw.[i];
+        if (byte != b'\\') {
+            if (byte < 0x20) return .{ Err: .{ InvalidEscape: i } };
+            len += 1;
+            i += 1;
+            continue;
+        }
+
+        let codepoint = decode_json_escape(raw, i).!;
+        if (i + 1 < #raw and raw.[i + 1] == b'u') {
+            if (is_high_surrogate(codepoint)) {
+                if (i + 12 > #raw or raw.[i + 6] != b'\\' or raw.[i + 7] != b'u') {
+                    return .{ Err: .{ InvalidUnicode: i } };
+                }
+                let low = decode_hex4(raw, i + 8).!;
+                if (!is_low_surrogate(low)) return .{ Err: .{ InvalidUnicode: i + 6 } };
+                let scalar = u32.{0x10000}
+                    + ((codepoint - u32.{0xD800}) << 10)
+                    + (low - u32.{0xDC00});
+                len += utf8_len(scalar);
+                i += 12;
+                continue;
+            }
+            if (!is_unicode_scalar(codepoint)) return .{ Err: .{ InvalidUnicode: i } };
+        }
+        len += utf8_len(codepoint);
+        i += 2;
+        if (i <= #raw and i >= 2 and raw.[i - 1] == b'u') {
+            i += 4;
+        }
+    }
+    return .{ Ok: len };
+}
+
+fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
+    let needed = decoded_string_len(raw).!;
+    if (needed > #out) return .{ Err: .ShortOutput };
+
+    let mut i = 0;
+    let mut dst = 0;
+    while (i < #raw) {
+        let byte = raw.[i];
+        if (byte != b'\\') {
+            out.[dst] = byte;
+            dst += 1;
+            i += 1;
+            continue;
+        }
+
+        let mut codepoint = decode_json_escape(raw, i).!;
+        if (i + 1 < #raw and raw.[i + 1] == b'u') {
+            if (is_high_surrogate(codepoint)) {
+                let low = decode_hex4(raw, i + 8).!;
+                codepoint = u32.{0x10000}
+                    + ((codepoint - u32.{0xD800}) << 10)
+                    + (low - u32.{0xDC00});
+                dst = write_utf8_codepoint(out, dst, codepoint);
+                i += 12;
+                continue;
+            }
+            dst = write_utf8_codepoint(out, dst, codepoint);
+            i += 6;
+            continue;
+        }
+        dst = write_utf8_codepoint(out, dst, codepoint);
+        i += 2;
+    }
+    return .{ Ok: dst };
+}
+
+fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
+    let needed = decoded_string_len(raw).!;
+    if (needed != #expected) return .{ Ok: false };
+
+    let mut scratch = [256]u8.{undef};
+    if (needed <= #scratch) {
+        let written = decode_string_into(raw, scratch..&[0 .. needed]).!;
+        return .{ Ok: bytes_eq(scratch.&[0 .. written], expected) };
+    }
+
+    let mut i = 0;
+    let mut cursor = 0;
+    while (i < #raw) {
+        let byte = raw.[i];
+        if (byte != b'\\') {
+            if (expected.[cursor] != byte) return .{ Ok: false };
+            cursor += 1;
+            i += 1;
+            continue;
+        }
+
+        let mut codepoint = decode_json_escape(raw, i).!;
+        let mut advance = usize.{2};
+        if (i + 1 < #raw and raw.[i + 1] == b'u') {
+            advance = 6;
+            if (is_high_surrogate(codepoint)) {
+                let low = decode_hex4(raw, i + 8).!;
+                codepoint = u32.{0x10000}
+                    + ((codepoint - u32.{0xD800}) << 10)
+                    + (low - u32.{0xDC00});
+                advance = 12;
+            }
+        }
+
+        let mut buf = [4]u8.{undef};
+        let written = write_utf8_codepoint(buf..&[0 .. 4], 0, codepoint);
+        if (!bytes_eq(buf.&[0 .. written], expected.&[cursor .. cursor + written])) {
+            return .{ Ok: false };
+        }
+        cursor += written;
+        i += advance;
+    }
+    return .{ Ok: true };
 }
 
 fn skip_ws(text: &[u8], start: usize) usize {
@@ -589,6 +905,45 @@ impl Value {
         return .{ Some: self.raw.&[1 .. #self.raw - 1] };
     }
 
+    /// Returns the byte length of this string after JSON escape decoding.
+    ///
+    /// Unicode escapes are decoded as UTF-8. Surrogate pairs are combined, and
+    /// unpaired surrogates return `StringError.InvalidUnicode`.
+    pub fn string_decoded_len() usize!StringError {
+        let .{ Some: raw } = self.string_raw() else return .{ Err: .NotString };
+        return decoded_string_len(raw);
+    }
+
+    /// Writes this string after JSON escape decoding into `out`.
+    ///
+    /// The return value is the number of UTF-8 bytes written.
+    pub fn write_string(out: &mut [u8]) usize!StringError {
+        let .{ Some: raw } = self.string_raw() else return .{ Err: .NotString };
+        return decode_string_into(raw, out);
+    }
+
+    /// Clones this string after JSON escape decoding.
+    ///
+    /// The returned `String` owns decoded UTF-8 bytes and must be released with
+    /// `deinit(alloc)`.
+    pub fn clone_string(alloc: &mut Allocator) String!StringError {
+        let needed = self.string_decoded_len().!;
+        let mut out = String.{};
+        let buf = out
+            ..&.try_append_uninit(alloc, needed)
+            .map_err(wrap_string_alloc_error)
+            .!;
+        let written = match (self.write_string(buf)) {
+            .{ Ok: count } => count,
+            .{ Err: err } => {
+                out..&.deinit(alloc);
+                return .{ Err: err };
+            },
+        };
+        out..&.truncate(written);
+        return .{ Ok: out };
+    }
+
     /// Returns an array cursor, or `None` when this is not an array.
     pub fn array() ?ArrayCursor {
         if (self.kind != .Array) return .None;
@@ -697,13 +1052,54 @@ impl &mut ObjectCursor {
         return .{ Ok: .{ Some: .{ key_raw: key_raw, key_text: key_text, value: value } } };
     }
 
-    /// Returns the first entry whose raw key text matches `key`.
-    pub fn find(key: &[u8]) ?Value!ParseError {
+    /// Returns the first entry whose decoded key matches `key`.
+    pub fn find(key: &[u8]) ?Value!KeyError {
         while (true) {
-            let next = self.next().!;
+            let next = self.next().map_err(wrap_key_parse_error).!;
             let .{ Some: entry } = next else return .{ Ok: .None };
-            if (bytes_eq(entry.key_text, key)) return .{ Ok: .{ Some: entry.value } };
+            if (entry.&.key_eq(key).map_err(wrap_key_string_error).!) {
+                return .{ Ok: .{ Some: entry.value } };
+            }
         }
         return .{ Ok: .None };
+    }
+}
+
+impl &ObjectEntry {
+    /// Returns the decoded UTF-8 byte length of this entry key.
+    pub fn key_decoded_len() usize!StringError {
+        return decoded_string_len(self.key_text);
+    }
+
+    /// Writes this entry key after JSON escape decoding into `out`.
+    pub fn write_key(out: &mut [u8]) usize!StringError {
+        return decode_string_into(self.key_text, out);
+    }
+
+    /// Returns whether this entry key decodes to `key`.
+    pub fn key_eq(key: &[u8]) bool!StringError {
+        return decoded_string_eq(self.key_text, key);
+    }
+
+    /// Clones this entry key after JSON escape decoding.
+    ///
+    /// The returned `String` owns decoded UTF-8 bytes and must be released with
+    /// `deinit(alloc)`.
+    pub fn clone_key(alloc: &mut Allocator) String!StringError {
+        let needed = self.key_decoded_len().!;
+        let mut out = String.{};
+        let buf = out
+            ..&.try_append_uninit(alloc, needed)
+            .map_err(wrap_string_alloc_error)
+            .!;
+        let written = match (self.write_key(buf)) {
+            .{ Ok: count } => count,
+            .{ Err: err } => {
+                out..&.deinit(alloc);
+                return .{ Err: err };
+            },
+        };
+        out..&.truncate(written);
+        return .{ Ok: out };
     }
 }

@@ -8,6 +8,9 @@ use sys.mem.page;
 
 fn check_scalars() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
 
     " null "
         .parse_json()
@@ -64,6 +67,51 @@ fn check_scalars() void {
         .should()
         .eq("kern\\n")
         .sum(@loc(), t);
+
+    string
+        .string_decoded_len()
+        .should_ok()
+        .eq(5)
+        .sum(@loc(), t);
+    let mut decoded_buf = [16]u8.{undef};
+    let decoded_len = string
+        .write_string(decoded_buf..&[0 .. 16])
+        .should_ok()
+        .sum(@loc(), t);
+    decoded_buf.&[0 .. decoded_len]
+        .should()
+        .eq("kern\n")
+        .sum(@loc(), t);
+
+    let emoji = "\"\\uD83D\\uDE80\""
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    let mut owned = emoji
+        .clone_string(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    defer owned..&.deinit(alloc);
+    owned.&.as_str()
+        .should()
+        .eq([4]u8.{ 0xF0, 0x9F, 0x9A, 0x80 })
+        .sum(@loc(), t);
+
+    let mut short = [3]u8.{undef};
+    emoji
+        .write_string(short..&[0 .. 3])
+        .should_err()
+        .eq(json.StringError.ShortOutput)
+        .sum(@loc(), t);
+
+    "\"\\uD83D\""
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t)
+        .string_decoded_len()
+        .should_err()
+        .eq(json.StringError.{ InvalidUnicode: 0 })
+        .sum(@loc(), t);
 }
 
 fn check_array_cursor() void {
@@ -119,6 +167,9 @@ fn check_array_cursor() void {
 
 fn check_object_cursor_and_lookup() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
     let value = "{\"name\":\"kern\",\"version\":7,\"name\":\"second\"}"
         .parse_json()
         .should_ok()
@@ -156,6 +207,45 @@ fn check_object_cursor_and_lookup() void {
         .sum(@loc(), t)
         .should()
         .eq("kern")
+        .sum(@loc(), t);
+
+    let escaped = "{\"na\\u006de\":\"decoded\",\"raw\":\"plain\"}"
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    let escaped_object = escaped.object().should_some().sum(@loc(), t)..&;
+    let escaped_next = escaped_object
+        .next()
+        .should_ok()
+        .sum(@loc(), t);
+    let escaped_entry = escaped_next.should_some().sum(@loc(), t);
+    escaped_entry
+        .&.key_eq("name")
+        .should_ok()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    let mut key = escaped_entry.&.clone_key(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    defer key..&.deinit(alloc);
+    key.&.as_str()
+        .should()
+        .eq("name")
+        .sum(@loc(), t);
+
+    let escaped_lookup = escaped.object().should_some().sum(@loc(), t)..&;
+    escaped_lookup
+        .find("name")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t)
+        .string_raw()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq("decoded")
         .sum(@loc(), t);
 }
 

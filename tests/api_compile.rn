@@ -6,6 +6,7 @@ use sys.mem.page;
 
 enum AppError {
     Parse: json.ParseError,
+    Key: json.KeyError,
     Render: json.RenderError,
 }
 
@@ -20,7 +21,7 @@ fn app() void!AppError {
     let mut object = object0;
     let lookup = object..&;
     let .{ Ok: enabled } = lookup.find("enabled") else {
-        .{ Err: err } => return .{ Err: .{ Parse: err } },
+        .{ Err: err } => return .{ Err: .{ Key: err } },
     };
     let .{ Some: flag } = enabled else return .{ Err: .{ Parse: .EmptyInput } };
     let .{ Some: enabled_flag } = flag.bool_value() else {
@@ -37,6 +38,7 @@ fn app() void!AppError {
 
     let page = page()..&;
     let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
     let doc0 = value.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
             return .{ Render: .{ Parse: .EmptyInput } };

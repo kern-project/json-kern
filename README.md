@@ -29,6 +29,7 @@ use sys.mem.page;
 
 enum AppError {
     Parse: json.ParseError,
+    Key: json.KeyError,
     Render: json.RenderError,
 }
 
@@ -42,7 +43,7 @@ fn app() void!AppError {
     };
     let object = object0..&;
     let .{ Ok: enabled } = object.find("enabled") else {
-        .{ Err: err } => return .{ Err: .{ Parse: err } },
+        .{ Err: err } => return .{ Err: .{ Key: err } },
     };
     let .{ Some: flag } = enabled else {
         return .{ Err: .{ Parse: .EmptyInput } };
@@ -62,6 +63,7 @@ fn app() void!AppError {
 
     let page = page()..&;
     let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
     let doc = root.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
             return .{ Render: .{ Parse: .EmptyInput } };
@@ -78,9 +80,12 @@ fn app() void!AppError {
 - `source.parse_json()` returns a borrowed `Value`.
 - `value.is_null()`, `value.bool_value()`, `value.number_text()`,
   `value.i64_value()`, and `value.string_raw()` expose scalar views.
+- `value.write_string(out)` and `value.clone_string(alloc)` decode JSON string
+  escapes into UTF-8 on demand.
 - `value.array()` returns an `ArrayCursor`.
 - `value.object()` returns an `ObjectCursor`.
-- `object.find(key)` returns the first raw key match. Duplicate keys are
+- `entry.write_key(out)` and `entry.clone_key(alloc)` decode object keys.
+- `object.find(key)` returns the first decoded key match. Duplicate keys are
   preserved by cursor iteration.
 - `value.render_compact(out)` and `source.render_json_compact(out)` write
   compact JSON into caller-owned output.
@@ -90,9 +95,9 @@ fn app() void!AppError {
 - `document.replace_root_json(alloc, text)` validates and replaces the whole
   document root.
 
-String APIs currently expose raw string contents. Escape decoding into caller
-storage is planned for the next layer so callers can choose allocation and
-Unicode policy explicitly.
+String decoding is explicit: parsing validates JSON escape syntax, while
+`write_string`, `clone_string`, `write_key`, and `clone_key` decode Unicode
+escapes into UTF-8 at the caller's chosen allocation boundary.
 
 ## Performance Notes
 
