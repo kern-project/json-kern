@@ -5,16 +5,24 @@
 //! inputs document implementation-defined pressure cases that should not crash.
 
 use base.test;
+use base.cmp.{Ordering, LESS, EQUAL, GREATER};
 use base.io.Write;
-use base.coll.string;
+use base.coll.{List, String, string};
 use base.mem.alloc.gpa;
 use json;
+use std.fs;
 use std.io;
 use sys.mem.page;
 
 struct Case {
     name: &[u8],
     text: &[u8],
+};
+
+struct SuiteStats {
+    accepted: usize = 0,
+    rejected: usize = 0,
+    implementation: usize = 0,
 };
 
 const VALID_CASES = [_]Case.{
@@ -60,52 +68,151 @@ const IMPLEMENTATION_CASES = [_]Case.{
     .{ name: "i_large_integer_text", text: "123456789012345678901234567890" },
 };
 
+// Sorts fixture entries so JSONTestSuite results are deterministic.
+fn case_name_cmp(lhs: fs.OwnedDirEntry, rhs: fs.OwnedDirEntry) Ordering {
+    return lhs.name.lex_cmp(rhs.name);
+}
+
+// Keeps path allocation and error shape local to the conformance runner.
+fn join_path(
+    alloc: &mut base.mem.alloc.Allocator,
+    base: &[u8],
+    child: &[u8],
+) String!fs.Error {
+    return fs.join(alloc, base, child);
+}
+
+// Runs the mirrored JSONTestSuite `test_parsing` corpus.
+fn check_json_test_suite() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let mut suite_dir = join_path(alloc, JSON_TEST_SUITE_ROOT, "test_parsing")
+        .should_ok()
+        .sum(@loc(), t);
+    defer suite_dir..&.deinit(alloc);
+
+    let suite_dir_path = suite_dir.&.path();
+    let mut entries = suite_dir_path.read_dir_entries(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    defer entries..&.deinit(alloc);
+    entries..&.as_mut_slice().sort_by(case_name_cmp);
+
+    let mut stats = SuiteStats.{};
+    for (entry: entries.&.as_slice().iter()) {
+        if (!entry.is_file()) {
+            continue;
+        }
+
+        let name = entry.name;
+        if (!name.ends_with(".json")) {
+            continue;
+        }
+        let mut case_path = join_path(alloc, suite_dir.&.as_str(), name)
+            .should_ok()
+            .sum(@loc(), t);
+        defer case_path..&.deinit(alloc);
+
+        let mut bytes = case_path.&.path().read_all(alloc)
+            .should_ok()
+            .sum(@loc(), t);
+        defer bytes..&.deinit(alloc);
+        let result = bytes.&.as_slice().validate_json(alloc);
+
+        if (name.starts_with("y_")) {
+            result.should_ok().sum(@loc(), t);
+            stats.accepted += 1;
+        } else if (name.starts_with("n_")) {
+            _ = result.should_err().sum(@loc(), t);
+            stats.rejected += 1;
+        } else if (name.starts_with("i_")) {
+            _ = result;
+            stats.implementation += 1;
+        }
+    }
+
+    stats.accepted
+        .should()
+        .eq(95)
+        .sum(@loc(), t);
+    stats.rejected
+        .should()
+        .eq(188)
+        .sum(@loc(), t);
+    stats.implementation
+        .should()
+        .eq(35)
+        .sum(@loc(), t);
+    "JSONTestSuite test_parsing: accepted={} rejected={} implementation={}".fmt(
+        .{stats.accepted, stats.rejected, stats.implementation}
+    ).println();
+}
+
+// Ensures valid built-in cases parse, validate, and compact back to JSON.
 fn check_valid_cases() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
     for (case: VALID_CASES.iter()) {
         case.text
-            .validate_json()
+            .validate_json(alloc)
             .should_ok()
             .sum(@loc(), t);
         let value = case.text
-            .parse_json()
+            .parse_json(alloc)
             .should_ok()
             .sum(@loc(), t);
         let mut compact = [256]u8.{undef};
         let written = value
-            .render_compact(compact..&[0 .. #compact])
+            .render_compact(alloc, compact..&[0 .. #compact])
             .should_ok()
             .sum(@loc(), t);
         compact.&[0 .. written]
-            .validate_json()
+            .validate_json(alloc)
             .should_ok()
             .sum(@loc(), t);
         _ = case.name;
     }
 }
 
+// Ensures invalid built-in cases fail validation.
 fn check_invalid_cases() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
     for (case: INVALID_CASES.iter()) {
         _ = case.text
-            .validate_json()
+            .validate_json(alloc)
             .should_err()
             .sum(@loc(), t);
         _ = case.name;
     }
 }
 
+// Ensures implementation-pressure cases are accepted without crashing.
 fn check_implementation_cases() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
     for (case: IMPLEMENTATION_CASES.iter()) {
         case.text
-            .validate_json()
+            .validate_json(alloc)
             .should_ok()
             .sum(@loc(), t);
         _ = case.name;
     }
 }
 
+// Covers escape decoding and decoded object-key lookup behavior.
 fn check_strings_and_lookup() void {
     let t = test.report(io.stderr())..&;
     let page = page()..&;
@@ -113,13 +220,13 @@ fn check_strings_and_lookup() void {
     defer alloc.deinit();
 
     let value = "{\"plain\":\"abc\",\"escaped\":\"a\\u002Fb\",\"music\":\"\\uD834\\uDD1E\"}"
-        .parse_json()
+        .parse_json(alloc)
         .should_ok()
         .sum(@loc(), t);
     let object = value.object().should_some().sum(@loc(), t)..&;
 
     let escaped = object
-        .find("escaped")
+        .find(alloc, "escaped")
         .should_ok()
         .sum(@loc(), t)
         .should_some()
@@ -135,7 +242,7 @@ fn check_strings_and_lookup() void {
         .sum(@loc(), t);
 
     "\"\\uDEAD\""
-        .parse_json()
+        .parse_json(alloc)
         .should_ok()
         .sum(@loc(), t)
         .string_decoded_len()
@@ -144,6 +251,7 @@ fn check_strings_and_lookup() void {
         .sum(@loc(), t);
 }
 
+// Covers owned document compaction and replacement round trips.
 fn check_document_roundtrip() void {
     let t = test.report(io.stderr())..&;
     let page = page()..&;
@@ -164,11 +272,11 @@ fn check_document_roundtrip() void {
         ..&.replace_root_json(alloc, "{\"ok\":true}")
         .should_ok()
         .sum(@loc(), t);
-    doc.&.root()
+    doc.&.root(alloc)
         .object()
         .should_some()
         .sum(@loc(), t)
-        ..&.find("ok")
+        ..&.find(alloc, "ok")
         .should_ok()
         .sum(@loc(), t)
         .should_some()
@@ -180,6 +288,7 @@ fn check_document_roundtrip() void {
         .sum(@loc(), t);
 }
 
+// Covers compact streaming through `base.io.Write`.
 fn check_writer() void {
     let t = test.report(io.stderr())..&;
     let page = page()..&;
@@ -191,7 +300,7 @@ fn check_writer() void {
     let mut string_writer = out..&.writer(alloc);
     let writer = &mut Write.{ string_writer..& };
     let count = "[ true, false, null, { \"a\" : \"b\" } ]"
-        .write_json_compact(writer)
+        .write_json_compact(alloc, writer)
         .should_ok()
         .sum(@loc(), t);
     count
@@ -204,10 +313,12 @@ fn check_writer() void {
         .sum(@loc(), t);
 }
 
+// Runs the extended conformance suite.
 fn main() i32 {
     check_valid_cases();
     check_invalid_cases();
     check_implementation_cases();
+    check_json_test_suite();
     check_strings_and_lookup();
     check_document_roundtrip();
     check_writer();

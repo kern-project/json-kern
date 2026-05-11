@@ -12,6 +12,7 @@ use ..{
 use ..parser.{parse_value, validate_value};
 use ..render.render_into;
 
+// Preserves allocation failure shape in the document error domain.
 fn wrap_alloc_error(err: AllocError) DocumentError {
     return match (err) {
         .CapacityOverflow => .CapacityOverflow,
@@ -25,7 +26,7 @@ pub/ fn compact_into(
     alloc: &mut Allocator,
     text: &[u8],
 ) void!DocumentError {
-    validate_value(text).map_err([](err: ParseError) DocumentError {
+    validate_value(alloc, text).map_err([](err: ParseError) DocumentError {
         return .{ Parse: err };
     }).!;
 
@@ -33,7 +34,7 @@ pub/ fn compact_into(
     let out = storage.try_append_uninit(alloc, #text)
         .map_err(wrap_alloc_error)
         .!;
-    let written = render_into(text, out)
+    let written = render_into(alloc, text, out)
         .map_err([](err: RenderError) DocumentError { return .{ Render: err }; })
         .!;
     storage.truncate(written);
@@ -42,7 +43,7 @@ pub/ fn compact_into(
 
 /// Parses and owns a compact JSON document.
 pub/ fn parse_document_impl(alloc: &mut Allocator, text: &[u8]) Document!DocumentError {
-    let value = parse_value(text)
+    let value = parse_value(alloc, text)
         .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
         .!;
     return value.clone_document(alloc);
@@ -62,8 +63,11 @@ impl &Document {
     }
 
     /// Returns the root value borrowed from this document.
-    pub fn root() Value {
-        let .{ Ok: value } = parse_value(self.as_json()) else {
+    ///
+    /// `alloc` is used only for temporary parser stack storage. The returned
+    /// value borrows this document's compact storage.
+    pub fn root(alloc: &mut Allocator) Value {
+        let .{ Ok: value } = parse_value(alloc, self.as_json()) else {
             @trap();
         };
         return value;

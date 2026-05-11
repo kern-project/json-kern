@@ -43,6 +43,7 @@ struct BenchInput {
 };
 
 impl &mut BenchInput {
+    // Releases benchmark-owned input and label storage together.
     fn deinit(alloc: &mut base.mem.alloc.Allocator) void {
         self.storage..&.deinit(alloc);
         self.label_storage..&.deinit(alloc);
@@ -50,6 +51,7 @@ impl &mut BenchInput {
     }
 }
 
+// Parses a positive decimal iteration count without accepting partial input.
 fn parse_iterations(text: &[u8]) usize {
     if (#text == 0) return usize.{0};
     let mut value = usize.{0};
@@ -62,6 +64,7 @@ fn parse_iterations(text: &[u8]) usize {
     return value;
 }
 
+// Prints one stable machine-readable benchmark result line.
 fn print_stats(
     label: &[u8],
     input_label: &[u8],
@@ -85,6 +88,7 @@ fn print_stats(
     ).println();
 }
 
+// Appends sample JSON fragments while preserving allocation failure as `false`.
 fn push(
     out: &mut String,
     alloc: &mut base.mem.alloc.Allocator,
@@ -94,6 +98,7 @@ fn push(
     return true;
 }
 
+// Builds the default repeated JSON payload used when no input path is supplied.
 fn build_sample(alloc: &mut base.mem.alloc.Allocator) ?String {
     let mut out = string();
     let reserve_bytes = #HEADER
@@ -111,6 +116,7 @@ fn build_sample(alloc: &mut base.mem.alloc.Allocator) ?String {
     return .{ Some: out };
 }
 
+// Couples owned input bytes with an owned label while exposing borrowed views.
 fn make_input(
     alloc: &mut base.mem.alloc.Allocator,
     storage: String,
@@ -128,6 +134,7 @@ fn make_input(
     } };
 }
 
+// Loads stdin, a file path, or the generated default sample as benchmark input.
 fn load_input(alloc: &mut base.mem.alloc.Allocator, path: ?&[u8]) BenchInput!fs.Error {
     match (path) {
         .{ Some: value } => {
@@ -161,7 +168,9 @@ fn load_input(alloc: &mut base.mem.alloc.Allocator, path: ?&[u8]) BenchInput!fs.
     }
 }
 
+// Measures complete-document borrowed parsing.
 fn bench_parse(
+    alloc: &mut base.mem.alloc.Allocator,
     iterations: usize,
     input_label: &[u8],
     text: &[u8],
@@ -169,7 +178,7 @@ fn bench_parse(
     let mut sink = usize.{0};
     let start = time.monotonic().now();
     for (_: range[usize](0, iterations)) {
-        let .{ Ok: value } = text.parse_json() else return false;
+        let .{ Ok: value } = text.parse_json(alloc) else return false;
         sink += #value.raw;
         sink += match (value.kind) {
             .Array => 1,
@@ -191,7 +200,9 @@ fn bench_parse(
     return true;
 }
 
+// Measures validation when the caller does not need a borrowed root value.
 fn bench_validate(
+    alloc: &mut base.mem.alloc.Allocator,
     iterations: usize,
     input_label: &[u8],
     text: &[u8],
@@ -199,7 +210,7 @@ fn bench_validate(
     let mut sink = usize.{0};
     let start = time.monotonic().now();
     for (_: range[usize](0, iterations)) {
-        let .{ Ok: _ } = text.validate_json() else return false;
+        let .{ Ok: _ } = text.validate_json(alloc) else return false;
         sink += #text;
     }
     print_stats(
@@ -213,7 +224,9 @@ fn bench_validate(
     return true;
 }
 
+// Measures compact rendering into caller-owned fixed storage.
 fn bench_compact(
+    alloc: &mut base.mem.alloc.Allocator,
     iterations: usize,
     input_label: &[u8],
     text: &[u8],
@@ -223,7 +236,7 @@ fn bench_compact(
     let mut sink = usize.{0};
     let start = time.monotonic().now();
     for (_: range[usize](0, iterations)) {
-        let .{ Ok: written } = text.render_json_compact(out..&[0 .. #out]) else return false;
+        let .{ Ok: written } = text.render_json_compact(alloc, out..&[0 .. #out]) else return false;
         sink += written;
     }
     print_stats(
@@ -237,18 +250,20 @@ fn bench_compact(
     return true;
 }
 
+// Measures repeated object lookup on a borrowed root view.
 fn bench_lookup(
+    alloc: &mut base.mem.alloc.Allocator,
     iterations: usize,
     input_label: &[u8],
     text: &[u8],
 ) bool {
     let mut sink = usize.{0};
-    let .{ Ok: root } = text.parse_json() else return false;
+    let .{ Ok: root } = text.parse_json(alloc) else return false;
     let start = time.monotonic().now();
     for (_: range[usize](0, iterations)) {
         let .{ Some: mut object0 } = root.object() else return false;
         let object = object0..&;
-        let .{ Ok: found } = object.find("meta") else return false;
+        let .{ Ok: found } = object.find(alloc, "meta") else return false;
         let .{ Some: value } = found else return false;
         sink += #value.raw;
     }
@@ -263,8 +278,12 @@ fn bench_lookup(
     return true;
 }
 
-fn bench_decode(iterations: usize) bool {
-    let .{ Ok: value } = DECODE_SAMPLE.parse_json() else return false;
+// Measures JSON string escape decoding independent from document parsing size.
+fn bench_decode(
+    alloc: &mut base.mem.alloc.Allocator,
+    iterations: usize,
+) bool {
+    let .{ Ok: value } = DECODE_SAMPLE.parse_json(alloc) else return false;
     let .{ Ok: needed } = value.string_decoded_len() else return false;
     let mut out = [64]u8.{undef};
     if (needed > #out) return false;
@@ -285,19 +304,42 @@ fn bench_decode(iterations: usize) bool {
     return true;
 }
 
+// Dispatches one named benchmark mode from the command-line interface.
 fn run_bench(
+    alloc: &mut base.mem.alloc.Allocator,
     name: &[u8],
     iterations: usize,
     input: &BenchInput,
 ) bool {
-    if (name == "parse") return bench_parse(iterations, input.label, input.text);
-    if (name == "validate") return bench_validate(iterations, input.label, input.text);
-    if (name == "compact") return bench_compact(iterations, input.label, input.text);
-    if (name == "lookup") return bench_lookup(iterations, input.label, input.text);
-    if (name == "decode") return bench_decode(iterations);
+    if (name == "parse") return bench_parse(
+        alloc,
+        iterations,
+        input.label,
+        input.text,
+    );
+    if (name == "validate") return bench_validate(
+        alloc,
+        iterations,
+        input.label,
+        input.text,
+    );
+    if (name == "compact") return bench_compact(
+        alloc,
+        iterations,
+        input.label,
+        input.text,
+    );
+    if (name == "lookup") return bench_lookup(
+        alloc,
+        iterations,
+        input.label,
+        input.text,
+    );
+    if (name == "decode") return bench_decode(alloc, iterations);
     return false;
 }
 
+// Benchmark command entry point.
 fn main(argc: i32, argv: &&u8) i32 {
     let args = proc.args(argc, argv);
     let page = page()..&;
@@ -328,7 +370,7 @@ fn main(argc: i32, argv: &&u8) i32 {
 
     match (mode) {
         .{ Some: name } => {
-            if (!run_bench(name, iterations, input..&)) {
+            if (!run_bench(gpa, name, iterations, input..&)) {
                 "unknown or failed bench: {}".fmt(.{ name, }).println();
                 return 1;
             }
@@ -337,10 +379,10 @@ fn main(argc: i32, argv: &&u8) i32 {
         .None => {},
     }
 
-    if (!bench_parse(iterations, input.label, input.text)) return 1;
-    if (!bench_validate(iterations, input.label, input.text)) return 1;
-    if (!bench_compact(iterations, input.label, input.text)) return 1;
-    if (!bench_lookup(iterations, input.label, input.text)) return 1;
-    if (!bench_decode(iterations)) return 1;
+    if (!bench_parse(gpa, iterations, input.label, input.text)) return 1;
+    if (!bench_validate(gpa, iterations, input.label, input.text)) return 1;
+    if (!bench_compact(gpa, iterations, input.label, input.text)) return 1;
+    if (!bench_lookup(gpa, iterations, input.label, input.text)) return 1;
+    if (!bench_decode(gpa, iterations)) return 1;
     return 0;
 }

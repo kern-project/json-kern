@@ -4,14 +4,19 @@
 //! insignificant whitespace outside strings.
 
 use base.io.Write;
+use base.mem.alloc.Allocator;
 
 use ..RenderError;
 use ..bytes.is_ws;
 use ..parser.validate_value;
 
 /// Renders valid JSON as compact JSON into `out`.
-pub/ fn render_into(text: &[u8], out: &mut [u8]) usize!RenderError {
-    validate_value(text).map_err([](err: ..ParseError) RenderError {
+pub/ fn render_into(
+    alloc: &mut Allocator,
+    text: &[u8],
+    out: &mut [u8],
+) usize!RenderError {
+    validate_value(alloc, text).map_err([](err: ..ParseError) RenderError {
         return .{ Parse: err };
     }).!;
 
@@ -44,8 +49,12 @@ pub/ fn render_into(text: &[u8], out: &mut [u8]) usize!RenderError {
 }
 
 /// Renders valid JSON as compact JSON into `writer`.
-pub/ fn write_into(text: &[u8], writer: &mut Write) usize!RenderError {
-    validate_value(text).map_err([](err: ..ParseError) RenderError {
+pub/ fn write_into(
+    alloc: &mut Allocator,
+    text: &[u8],
+    writer: &mut Write,
+) usize!RenderError {
+    validate_value(alloc, text).map_err([](err: ..ParseError) RenderError {
         return .{ Parse: err };
     }).!;
 
@@ -81,12 +90,24 @@ pub/ fn write_into(text: &[u8], writer: &mut Write) usize!RenderError {
 
 impl &[u8] {
     /// Renders this JSON document compactly into `out`.
-    pub fn render_json_compact(out: &mut [u8]) usize!RenderError {
-        return render_into(self, out);
+    ///
+    /// `alloc` is used only for temporary parser stack storage during
+    /// validation.
+    pub fn render_json_compact(
+        alloc: &mut Allocator,
+        out: &mut [u8],
+    ) usize!RenderError {
+        return render_into(alloc, self, out);
     }
 
     /// Writes this JSON document compactly into `writer`.
-    pub fn write_json_compact(writer: &mut Write) usize!RenderError {
-        return write_into(self, writer);
+    ///
+    /// `alloc` is used only for temporary parser stack storage during
+    /// validation.
+    pub fn write_json_compact(
+        alloc: &mut Allocator,
+        writer: &mut Write,
+    ) usize!RenderError {
+        return write_into(alloc, self, writer);
     }
 }

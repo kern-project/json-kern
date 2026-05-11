@@ -17,6 +17,7 @@ pub/ fn wrap_string_alloc_error(err: AllocError) StringError {
     };
 }
 
+// Decodes exactly four JSON unicode escape hex digits from `offset`.
 fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
     if (offset + 4 > #raw) return .{ Err: .{ InvalidEscape: offset } };
     let mut value = u32.{0};
@@ -30,20 +31,24 @@ fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
     return .{ Ok: value };
 }
 
+// JSON surrogate helpers keep Unicode scalar validation readable.
 fn is_high_surrogate(codepoint: u32) bool {
     return codepoint >= u32.{0xD800} and codepoint <= u32.{0xDBFF};
 }
 
+// JSON low surrogates are only valid after a preceding high surrogate.
 fn is_low_surrogate(codepoint: u32) bool {
     return codepoint >= u32.{0xDC00} and codepoint <= u32.{0xDFFF};
 }
 
+// Returns whether a decoded codepoint can be represented as a Unicode scalar.
 fn is_unicode_scalar(codepoint: u32) bool {
     return codepoint <= u32.{0x10FFFF}
         and !is_high_surrogate(codepoint)
         and !is_low_surrogate(codepoint);
 }
 
+// Computes UTF-8 byte width for an already-validated scalar value.
 fn utf8_len(codepoint: u32) usize {
     if (codepoint <= u32.{0x7F}) return 1;
     if (codepoint <= u32.{0x7FF}) return 2;
@@ -51,6 +56,7 @@ fn utf8_len(codepoint: u32) usize {
     return 4;
 }
 
+// Writes one already-validated scalar value as UTF-8.
 fn write_utf8_codepoint(
     out: &mut [u8],
     index: usize,
@@ -78,6 +84,7 @@ fn write_utf8_codepoint(
     return index + 4;
 }
 
+// Decodes one JSON escape and leaves surrogate pairing to the caller.
 fn decode_json_escape(raw: &[u8], slash: usize) u32!StringError {
     if (slash + 1 >= #raw) return .{ Err: .{ InvalidEscape: slash } };
     return match (raw.[slash + 1]) {
@@ -98,6 +105,7 @@ fn decode_json_escape(raw: &[u8], slash: usize) u32!StringError {
 pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
     let mut i = 0;
     let mut len = 0;
+    // Escape decoding advances by variable widths, including surrogate pairs.
     while (i < #raw) {
         let byte = raw.[i];
         if (byte != b'\\') {
@@ -140,6 +148,7 @@ pub/ fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
 
     let mut i = 0;
     let mut dst = 0;
+    // The source cursor follows escape width while the destination cursor follows UTF-8 width.
     while (i < #raw) {
         let byte = raw.[i];
         if (byte != b'\\') {
@@ -183,6 +192,7 @@ pub/ fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
 
     let mut i = 0;
     let mut cursor = 0;
+    // Compare decoded bytes without allocating for strings larger than the scratch buffer.
     while (i < #raw) {
         let byte = raw.[i];
         if (byte != b'\\') {

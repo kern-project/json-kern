@@ -35,8 +35,8 @@ enum AppError {
     Render: json.RenderError,
 }
 
-fn app() void!AppError {
-    let .{ Ok: root } = "{\"name\":\"kern\",\"enabled\":true}".parse_json() else {
+fn app(alloc: &mut base.mem.alloc.Allocator) void!AppError {
+    let .{ Ok: root } = "{\"name\":\"kern\",\"enabled\":true}".parse_json(alloc) else {
         .{ Err: err } => return .{ Err: .{ Parse: err } },
     };
 
@@ -44,7 +44,7 @@ fn app() void!AppError {
         return .{ Err: .{ Parse: .EmptyInput } };
     };
     let object = object0..&;
-    let .{ Ok: enabled } = object.find("enabled") else {
+    let .{ Ok: enabled } = object.find(alloc, "enabled") else {
         .{ Err: err } => return .{ Err: .{ Key: err } },
     };
     let .{ Some: flag } = enabled else {
@@ -59,19 +59,15 @@ fn app() void!AppError {
     }
 
     let mut out = [32]u8.{undef};
-    _ = root.render_compact(out..&[0 .. 32])
+    _ = root.render_compact(alloc, out..&[0 .. 32])
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
-
-    let page = page()..&;
-    let alloc = gpa().on(page)..&;
-    defer alloc.deinit();
 
     let mut compact = string();
     defer compact..&.deinit(alloc);
     let mut string_writer = compact..&.writer(alloc);
     let writer = &mut Write.{ string_writer..& };
-    _ = root.write_compact(writer)
+    _ = root.write_compact(alloc, writer)
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
 
@@ -83,28 +79,43 @@ fn app() void!AppError {
     defer doc..&.deinit(alloc);
     return .{ Ok: {} };
 }
+
+fn main() i32 {
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let .{ Ok: _ } = app(alloc) else return 1;
+    return 0;
+}
 ```
 
 ## Borrowed API
 
-- `source.validate_json()` validates a complete document.
-- `source.parse_json()` returns a borrowed `Value`.
+- `source.validate_json(alloc)` validates a complete document.
+- `source.parse_json(alloc)` returns a borrowed `Value`.
 - `value.is_null()`, `value.bool_value()`, `value.number_text()`,
-  `value.i64_value()`, and `value.string_raw()` expose scalar views.
+  `value.i64_value()`, `value.f64_value()`, and `value.string_raw()` expose
+  scalar views.
+- `value.require_f64()` reports explicit `json.NumberError` failures when a
+  number is malformed or outside the finite `f64` range.
+- `parse_error.offset()` and `parse_error.location_in(source)` expose byte
+  offsets and one-based line/column diagnostics when a parse error carries an
+  exact position.
 - `value.write_string(out)` and `value.clone_string(alloc)` decode JSON string
   escapes into UTF-8 on demand.
 - `value.array()` returns an `ArrayCursor`.
 - `value.object()` returns an `ObjectCursor`.
 - `entry.write_key(out)` and `entry.clone_key(alloc)` decode object keys.
-- `object.find(key)` returns the first decoded key match. Duplicate keys are
+- `object.find(alloc, key)` returns the first decoded key match. Duplicate keys are
   preserved by cursor iteration.
-- `value.render_compact(out)` and `source.render_json_compact(out)` write
+- `value.render_compact(alloc, out)` and `source.render_json_compact(alloc, out)` write
   compact JSON into caller-owned output.
-- `value.write_compact(writer)` and `source.write_json_compact(writer)` stream
+- `value.write_compact(alloc, writer)` and `source.write_json_compact(alloc, writer)` stream
   compact JSON into a `base.io.Write` sink.
 - `value.clone_document(alloc)` and `source.parse_json_document(alloc)` build
   an owned compact `Document`.
-- `document.root()` returns a borrowed view over the owned compact storage.
+- `document.root(alloc)` returns a borrowed view over the owned compact storage.
 - `document.replace_root_json(alloc, text)` validates and replaces the whole
   document root.
 
@@ -114,11 +125,12 @@ escapes into UTF-8 at the caller's chosen allocation boundary.
 
 ## Performance Notes
 
-The parser validates with a single recursive scan over the source text.
-Borrowed cursors scan the selected array or object as they advance; they do not
-allocate an index. This is the intended default for one-pass protocol handling.
-Repeated object lookup should use an indexed view later when measurements show
-the repeated lookup cost matters.
+The parser validates with an explicit stack allocated through the caller's
+allocator. This keeps nesting depth out of the machine call stack while keeping
+allocation visible at the API boundary. Borrowed cursors scan the selected array
+or object as they advance; they do not allocate an index. Repeated object lookup
+should use an indexed view later when measurements show the repeated lookup cost
+matters.
 
 ## Development
 

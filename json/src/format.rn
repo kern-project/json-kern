@@ -5,10 +5,59 @@ use base.io.{Formatable, Write};
 use ..{
     DocumentError,
     KeyError,
+    NumberError,
     ParseError,
+    ParseLocation,
     RenderError,
     StringError,
 };
+
+// Extracts exact source offsets only from variants that carry one.
+fn parse_error_offset(err: ParseError) ?usize {
+    return match (err) {
+        .EmptyInput => .None,
+        .UnexpectedEof => .None,
+        .{ UnexpectedByte: offset } => .{ Some: offset },
+        .{ InvalidNumber: offset } => .{ Some: offset },
+        .{ InvalidEscape: offset } => .{ Some: offset },
+        .{ UnterminatedString: offset } => .{ Some: offset },
+        .{ MissingColon: offset } => .{ Some: offset },
+        .{ MissingCommaOrEnd: offset } => .{ Some: offset },
+        .{ TrailingData: offset } => .{ Some: offset },
+        .CapacityOverflow => .None,
+        .OutOfMemory => .None,
+    };
+}
+
+impl ParseError {
+    /// Returns the byte offset carried by this error, when the variant has one.
+    pub fn offset() ?usize {
+        return parse_error_offset(self);
+    }
+
+    /// Maps this error's byte offset to one-based line and byte-column numbers.
+    ///
+    /// `EmptyInput` and `UnexpectedEof` do not carry an exact offset and return
+    /// `None`. Other offsets are clamped to the end of `text`, so callers can
+    /// still display a location if the error came from a related slice.
+    pub fn location_in(text: &[u8]) ?ParseLocation {
+        let .{ Some: raw_offset } = self.offset() else return .None;
+        let offset = if (raw_offset > #text) #text else raw_offset;
+        let mut line = usize.{1};
+        let mut column = usize.{1};
+        let mut i = usize.{0};
+        while (i < offset) {
+            if (text.[i] == b'\n') {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+            i += 1;
+        }
+        return .{ Some: .{ offset: raw_offset, line: line, column: column } };
+    }
+}
 
 impl &ParseError : Formatable {
     /// Writes a stable diagnostic name for the parse error.
@@ -37,6 +86,32 @@ impl &ParseError : Formatable {
             .{ TrailingData: offset } => {
                 _ = "json.ParseError.TrailingData({})".fmt(.{offset}).write_to(writer);
             },
+            .CapacityOverflow => _ = writer.write("json.ParseError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.ParseError.OutOfMemory"),
+        }
+    }
+}
+
+impl &ParseLocation : Formatable {
+    /// Writes a stable line/column diagnostic location.
+    pub fn write_to(writer: &mut Write) void {
+        _ = "byte {}, line {}, column {}".fmt(.{
+            self.offset,
+            self.line,
+            self.column,
+        }).write_to(writer);
+    }
+}
+
+impl &NumberError : Formatable {
+    /// Writes a stable diagnostic name for the number error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .NotNumber => _ = writer.write("json.NumberError.NotNumber"),
+            .{ InvalidNumber: offset } => {
+                _ = "json.NumberError.InvalidNumber({})".fmt(.{offset}).write_to(writer);
+            },
+            .Overflow => _ = writer.write("json.NumberError.Overflow"),
         }
     }
 }
@@ -146,6 +221,8 @@ impl ParseError : Eq[ParseError] {
                 .{ TrailingData: b } => a == b,
                 _ => false,
             },
+            .CapacityOverflow => match (other) { .CapacityOverflow => true, _ => false },
+            .OutOfMemory => match (other) { .OutOfMemory => true, _ => false },
         };
     }
 }
@@ -178,6 +255,20 @@ impl StringError : Eq[StringError] {
             },
             .{ InvalidUnicode: a } => match (other) {
                 .{ InvalidUnicode: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl NumberError : Eq[NumberError] {
+    /// Compares number error variants exactly.
+    pub fn eq(other: NumberError) bool {
+        return match (self) {
+            .NotNumber => match (other) { .NotNumber => true, _ => false },
+            .Overflow => match (other) { .Overflow => true, _ => false },
+            .{ InvalidNumber: a } => match (other) {
+                .{ InvalidNumber: b } => a == b,
                 _ => false,
             },
         };

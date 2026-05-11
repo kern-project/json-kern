@@ -1,15 +1,19 @@
 //! JSON parsing, borrowed traversal, and compact rendering utilities for Kern.
 //!
-//! The first layer is allocation-free. `Value` borrows the original input, and
-//! array/object cursors advance through the borrowed JSON text without building
-//! a node tree. This keeps validation and protocol-field extraction fast and
-//! predictable. Owned documents are built on top of this borrowed layer.
+//! The public API is receiver-shaped: call `source.parse_json(alloc)`,
+//! `value.render_compact(alloc, out)`, or `document.root(alloc)` from the data
+//! being operated on. The first layer is allocation-free. `Value` borrows the
+//! original input, and array/object cursors advance through the borrowed JSON
+//! text without building a node tree. This keeps validation and protocol-field
+//! extraction fast and predictable. Owned documents are built on top of this
+//! borrowed layer.
 
 use base.coll.String;
 
 mod bytes;
 mod decode;
 mod format;
+mod number;
 mod parser;
 mod render;
 mod document;
@@ -25,7 +29,11 @@ pub enum Kind {
     Object,
 };
 
-/// JSON parse failures with byte offsets.
+/// JSON parse failures.
+///
+/// Offset-carrying variants report byte offsets in the input slice. Allocation
+/// variants come from the explicit parser stack used to validate nested arrays
+/// and objects.
 pub enum ParseError {
     /// The input is empty or contains only whitespace.
     EmptyInput,
@@ -45,6 +53,20 @@ pub enum ParseError {
     MissingCommaOrEnd: usize,
     /// Extra non-whitespace bytes followed a complete value.
     TrailingData: usize,
+    /// Parser stack capacity arithmetic overflowed while validating nesting.
+    CapacityOverflow,
+    /// The allocator could not satisfy parser stack storage.
+    OutOfMemory,
+};
+
+/// One-based source location for a JSON parse diagnostic.
+pub struct ParseLocation {
+    /// Byte offset in the original source.
+    pub offset: usize,
+    /// One-based line number.
+    pub line: usize,
+    /// One-based column number counted in bytes.
+    pub column: usize,
 };
 
 /// JSON string decoding failures.
@@ -72,6 +94,16 @@ pub enum KeyError {
     Parse: ParseError,
     /// Object key decoding failed while comparing a JSON key.
     String: StringError,
+};
+
+/// JSON number decoding failures.
+pub enum NumberError {
+    /// The requested value is not a JSON number.
+    NotNumber,
+    /// The number text does not follow the JSON number grammar.
+    InvalidNumber: usize,
+    /// The JSON number cannot be represented as a finite `f64`.
+    Overflow,
 };
 
 /// Rendering failures for compact JSON output.
@@ -148,38 +180,3 @@ pub struct ObjectCursor {
     pub/ first: bool = true,
     pub/ done: bool = false,
 };
-
-/// Parses one complete borrowed JSON value.
-pub fn parse(text: &[u8]) Value!ParseError {
-    return parser.parse_value(text);
-}
-
-/// Validates one complete JSON document.
-pub fn validate(text: &[u8]) void!ParseError {
-    return parser.validate_value(text);
-}
-
-/// Renders valid JSON as compact JSON into `out`.
-///
-/// The return value is the number of bytes written. String contents are copied
-/// exactly as written; whitespace outside strings is removed.
-pub fn render_compact(text: &[u8], out: &mut [u8]) usize!RenderError {
-    return render.render_into(text, out);
-}
-
-/// Renders valid JSON as compact JSON into `writer`.
-///
-/// The return value is the number of bytes accepted by the writer. String
-/// contents are copied exactly as written; whitespace outside strings is
-/// removed.
-pub fn write_compact(text: &[u8], writer: &mut base.io.Write) usize!RenderError {
-    return render.write_into(text, writer);
-}
-
-/// Parses and owns a compact JSON document.
-pub fn parse_document(
-    alloc: &mut base.mem.alloc.Allocator,
-    text: &[u8],
-) Document!DocumentError {
-    return document.parse_document_impl(alloc, text);
-}

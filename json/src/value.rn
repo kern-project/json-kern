@@ -10,6 +10,7 @@ use ..{
     DocumentError,
     KeyError,
     Kind,
+    NumberError,
     ObjectCursor,
     ObjectEntry,
     ParseError,
@@ -17,7 +18,7 @@ use ..{
     StringError,
     Value,
 };
-use ..bytes.{bytes_eq, parse_at, skip_ws, string_end};
+use ..bytes.{bytes_eq, parse_at_with_stack, skip_ws, string_end};
 use ..decode.{
     clone_decoded_string,
     decode_string_into,
@@ -25,12 +26,15 @@ use ..decode.{
     decoded_string_len,
 };
 use ..document.compact_into;
+use ..number.parse_f64;
 use ..render.{render_into, write_into};
 
+// Lifts cursor parse failures into object lookup failures.
 fn wrap_key_parse_error(err: ParseError) KeyError {
     return .{ Parse: err };
 }
 
+// Lifts key decoding failures into object lookup failures.
 fn wrap_key_string_error(err: StringError) KeyError {
     return .{ String: err };
 }
@@ -60,6 +64,23 @@ impl Value {
         if (self.kind != .Number) return .None;
         let .{ Ok: value } = self.raw.parse[i64]() else return .None;
         return .{ Some: value };
+    }
+
+    /// Parses this number as finite `f64`.
+    ///
+    /// Returns `None` when this is not a number or when the number overflows the
+    /// finite `f64` range. JSON has no NaN or infinity spellings, so this helper
+    /// never synthesizes non-finite values.
+    pub fn f64_value() ?f64 {
+        if (self.kind != .Number) return .None;
+        let .{ Ok: value } = parse_f64(self.raw) else return .None;
+        return .{ Some: value };
+    }
+
+    /// Parses this number as finite `f64` with an explicit error.
+    pub fn require_f64() f64!NumberError {
+        if (self.kind != .Number) return .{ Err: .NotNumber };
+        return parse_f64(self.raw);
     }
 
     /// Returns raw string contents without the surrounding quotes.
@@ -107,13 +128,25 @@ impl Value {
     }
 
     /// Renders this borrowed value compactly into `out`.
-    pub fn render_compact(out: &mut [u8]) usize!RenderError {
-        return render_into(self.raw, out);
+    ///
+    /// `alloc` is used only for temporary parser stack storage during
+    /// validation.
+    pub fn render_compact(
+        alloc: &mut Allocator,
+        out: &mut [u8],
+    ) usize!RenderError {
+        return render_into(alloc, self.raw, out);
     }
 
     /// Writes this borrowed value compactly into `writer`.
-    pub fn write_compact(writer: &mut base.io.Write) usize!RenderError {
-        return write_into(self.raw, writer);
+    ///
+    /// `alloc` is used only for temporary parser stack storage during
+    /// validation.
+    pub fn write_compact(
+        alloc: &mut Allocator,
+        writer: &mut base.io.Write,
+    ) usize!RenderError {
+        return write_into(alloc, self.raw, writer);
     }
 
     /// Clones this borrowed value into an owned compact document.
@@ -126,7 +159,10 @@ impl Value {
 
 impl &mut ArrayCursor {
     /// Returns the next array value.
-    pub fn next() ?Value!ParseError {
+    ///
+    /// `alloc` is used only for temporary parser stack storage while finding
+    /// the value span.
+    pub fn next(alloc: &mut Allocator) ?Value!ParseError {
         if (self.done) return .{ Ok: .None };
         let mut i = skip_ws(self.data, self.index);
         if (i >= #self.data) {
@@ -138,7 +174,7 @@ impl &mut ArrayCursor {
             i = skip_ws(self.data, i + 1);
         }
 
-        let value = parse_at(self.data, i).!;
+        let value = parse_at_with_stack(alloc, self.data, i).!;
         self.index = i + #value.raw;
         self.first = false;
         return .{ Ok: .{ Some: value } };
@@ -147,7 +183,10 @@ impl &mut ArrayCursor {
 
 impl &mut ObjectCursor {
     /// Returns the next object entry.
-    pub fn next() ?ObjectEntry!ParseError {
+    ///
+    /// `alloc` is used only for temporary parser stack storage while finding
+    /// the value span.
+    pub fn next(alloc: &mut Allocator) ?ObjectEntry!ParseError {
         if (self.done) return .{ Ok: .None };
         let mut i = skip_ws(self.data, self.index);
         if (i >= #self.data) {
@@ -168,16 +207,19 @@ impl &mut ObjectCursor {
         if (i >= #self.data) return .{ Err: .UnexpectedEof };
         if (self.data.[i] != b':') return .{ Err: .{ MissingColon: i } };
         i = skip_ws(self.data, i + 1);
-        let value = parse_at(self.data, i).!;
+        let value = parse_at_with_stack(alloc, self.data, i).!;
         self.index = i + #value.raw;
         self.first = false;
         return .{ Ok: .{ Some: .{ key_raw: key_raw, key_text: key_text, value: value } } };
     }
 
     /// Returns the first entry whose decoded key matches `key`.
-    pub fn find(key: &[u8]) ?Value!KeyError {
+    ///
+    /// `alloc` is used only for temporary parser stack storage while scanning
+    /// values in the object.
+    pub fn find(alloc: &mut Allocator, key: &[u8]) ?Value!KeyError {
         while (true) {
-            let next = self.next().map_err(wrap_key_parse_error).!;
+            let next = self.next(alloc).map_err(wrap_key_parse_error).!;
             let .{ Some: entry } = next else return .{ Ok: .None };
             if (entry.&.key_eq(key).map_err(wrap_key_string_error).!) {
                 return .{ Ok: .{ Some: entry.value } };

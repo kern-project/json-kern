@@ -1,0 +1,182 @@
+//! JSON number decoding helpers.
+//!
+//! The parser validates JSON number grammar. These helpers decode already
+//! validated number text into Kern numeric values without allocating.
+
+use ..bytes.is_digit;
+use ..{NumberError, ParseError};
+use ..bytes.number_end;
+
+// Narrows parser number diagnostics into the public number error domain.
+fn wrap_parse_number_error(err: ParseError) NumberError {
+    return match (err) {
+        .{ InvalidNumber: offset } => .{ InvalidNumber: offset },
+        .{ UnexpectedByte: offset } => .{ InvalidNumber: offset },
+        .UnexpectedEof => .{ InvalidNumber: 0 },
+        _ => .{ InvalidNumber: 0 },
+    };
+}
+
+// Reuses the JSON grammar scanner to reject non-number borrowed values.
+fn validate_number_text(text: &[u8]) void!NumberError {
+    if (#text == 0) return .{ Err: .{ InvalidNumber: 0 } };
+    let first = text.[0];
+    if (first != b'-' and !is_digit(first)) return .{ Err: .{ InvalidNumber: 0 } };
+    let end = number_end(text, 0).map_err(wrap_parse_number_error).!;
+    if (end != #text) return .{ Err: .{ InvalidNumber: end } };
+    return .{ Ok: {} };
+}
+
+// Reinterprets IEEE-754 bits without requiring a libm dependency.
+fn f64_from_bits(bits: u64) f64 {
+    let value = bits;
+    return (value.& as &f64).*;
+}
+
+// Provides a portable infinity sentinel for overflow checks.
+fn positive_infinity() f64 {
+    return f64_from_bits(u64.{0x7FF0000000000000});
+}
+
+// Computes powers of ten by repeated squaring and reports positive overflow.
+fn power10(exp: i32) f64!NumberError {
+    let mut remaining = if (exp < 0) 0 - exp else exp;
+    let mut base = if (exp < 0) 0.1 else 10.0;
+    let mut factor = 1.0;
+    while (remaining > 0) {
+        if ((remaining & 1) != 0) {
+            factor = factor * base;
+            if (exp > 0 and factor == positive_infinity()) return .{ Err: .Overflow };
+        }
+        remaining = remaining >> 1;
+        if (remaining > 0) {
+            base = base * base;
+            if (exp > 0 and base == positive_infinity()) return .{ Err: .Overflow };
+        }
+    }
+    return .{ Ok: factor };
+}
+
+// Converts non-finite results into the JSON number error domain.
+fn finite_or_overflow(value: f64) f64!NumberError {
+    if (value == positive_infinity() or value == 0.0 - positive_infinity()) {
+        return .{ Err: .Overflow };
+    }
+    return .{ Ok: value };
+}
+
+// Applies decimal scale and sign after mantissa normalization.
+fn normalized_digits_to_f64(
+    mantissa: u64,
+    decimal_exp: i32,
+    negative: bool,
+) f64!NumberError {
+    if (mantissa == 0) {
+        if (negative) return .{ Ok: 0.0 - 0.0 };
+        return .{ Ok: 0.0 };
+    }
+    let scale = power10(decimal_exp).!;
+    let mut value = if (decimal_exp < 0) {
+        (mantissa as f64) * scale
+    } else {
+        finite_or_overflow((mantissa as f64) * scale).!
+    };
+    if (negative) value = 0.0 - value;
+    return finite_or_overflow(value);
+}
+
+// Rounds dropped decimal digits to nearest-even for the kept mantissa.
+fn maybe_round_up(
+    mantissa: u64,
+    has_dropped_digit: bool,
+    dropped_digit: u8,
+    sticky: bool,
+) u64 {
+    if (!has_dropped_digit) return mantissa;
+    if (dropped_digit > 5) return mantissa + 1;
+    if (dropped_digit < 5) return mantissa;
+    if (sticky or (mantissa & u64.{1}) != 0) return mantissa + 1;
+    return mantissa;
+}
+
+// Parses the optional exponent with a cap large enough to decide overflow.
+fn parse_exp(text: &[u8], start: usize) i32!NumberError {
+    if (start >= #text) return .{ Ok: 0 };
+    let mut i = start + 1;
+    let mut negative = false;
+    if (text.[i] == b'+' or text.[i] == b'-') {
+        negative = text.[i] == b'-';
+        i += 1;
+    }
+
+    let mut exp = i32.{0};
+    for (byte: text.&[i .. #text].iter()) {
+        if (exp < 10000) {
+            exp = exp * 10 + ((byte - b'0') as i32);
+        }
+    }
+    if (negative) return .{ Ok: 0 - exp };
+    return .{ Ok: exp };
+}
+
+/// Parses already-validated JSON number text into finite `f64`.
+pub/ fn parse_f64(text: &[u8]) f64!NumberError {
+    validate_number_text(text).!;
+    let mut i = usize.{0};
+    let negative = text.[0] == b'-';
+    if (negative) i += 1;
+
+    let mut mantissa = u64.{0};
+    let mut digits_kept = usize.{0};
+    let mut fractional_digits = i32.{0};
+    let mut has_dropped_digit = false;
+    let mut dropped = u8.{0};
+    let mut sticky = false;
+    // Integer digits feed a bounded mantissa while tracking dropped precision.
+    while (i < #text) {
+        let byte = text.[i];
+        if (byte == b'.' or byte == b'e' or byte == b'E') break;
+        if (digits_kept < 19) {
+            mantissa = mantissa * 10 + ((byte - b'0') as u64);
+            digits_kept += 1;
+        } else if (!has_dropped_digit) {
+            has_dropped_digit = true;
+            dropped = byte - b'0';
+        } else if (byte != b'0') {
+            sticky = true;
+        }
+        i += 1;
+    }
+
+    if (i < #text and text.[i] == b'.') {
+        i += 1;
+        // Fractional digits share the same bounded mantissa and extend scale.
+        while (i < #text and is_digit(text.[i])) {
+            if (digits_kept < 19) {
+                mantissa = mantissa * 10 + ((text.[i] - b'0') as u64);
+                digits_kept += 1;
+                fractional_digits += 1;
+            } else {
+                if (!has_dropped_digit) {
+                    has_dropped_digit = true;
+                    dropped = text.[i] - b'0';
+                } else if (text.[i] != b'0') {
+                    sticky = true;
+                }
+                fractional_digits += 1;
+            }
+            i += 1;
+        }
+    }
+
+    let exp_start = i;
+    let explicit_exp = parse_exp(text, exp_start).!;
+    mantissa = maybe_round_up(
+        mantissa,
+        has_dropped_digit,
+        dropped,
+        sticky,
+    );
+    let decimal_exp = explicit_exp - fractional_digits;
+    return normalized_digits_to_f64(mantissa, decimal_exp, negative);
+}

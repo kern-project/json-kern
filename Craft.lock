@@ -28,7 +28,7 @@ version = "0.1.0"
 source = "workspace-member"
 source-value = "json-test"
 manifest = "json-test/Craft.toml"
-manifest-digest = "fnv1a64:29bc029463918166"
+manifest-digest = "fnv1a64:e6cef166b81b5136"
 
 [[package-target]]
 package = "json 0.1.0 workspace-member:json"
@@ -59,6 +59,14 @@ kind = "bin"
 name = "json-test"
 root = "src/main.rn"
 
+[[package-resource]]
+package = "json-test 0.1.0 workspace-member:json-test"
+name = "JSONTestSuite"
+source = "git"
+source-value = "https://github.com/nst/JSONTestSuite.git"
+source-locator = "https://github.com/nst/JSONTestSuite.git"
+source-selector = "rev:1ef36fa01286573e846ac449e8683f8833c5b26a"
+
 [[dependency]]
 from = "json-bench 0.1.0 workspace-member:json-bench"
 kind = "normal"
@@ -82,4 +90,4 @@ version = "0.1.0"
 kern = "0.7.5"
 repository = "https://github.com/softfault/json-kern.git"
 manifest-sha256 = "sha256:9d4d536af6361405b0e6919b91712ec5c24fc7fafdd7be0cfd2da08db7bacd9b"
-source-sha256 = "sha256:58a89d9509e938ca19308bcaf03f98e04f8bf0d3b7ba559ee1653c7a7a2ae284"
+source-sha256 = "sha256:cecc41f5bf18019871608bcf41a4480fd1c91017d8579502d6c0f70f81926993"

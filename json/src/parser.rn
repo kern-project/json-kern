@@ -1,33 +1,44 @@
 //! Complete-document borrowed JSON parsing.
 
 use ..{ParseError, Value};
-use ..bytes.{parse_at, skip_ws};
+use ..bytes.{parse_at_with_stack, skip_ws};
 
-/// Parses one complete borrowed JSON value.
-pub/ fn parse_value(text: &[u8]) Value!ParseError {
+/// Parses one complete borrowed JSON value using an explicit parser stack.
+pub/ fn parse_value(
+    alloc: &mut base.mem.alloc.Allocator,
+    text: &[u8],
+) Value!ParseError {
     let start = skip_ws(text, 0);
     if (start >= #text) return .{ Err: .EmptyInput };
 
-    let value = parse_at(text, start).!;
+    let value = parse_at_with_stack(alloc, text, start).!;
     let end = skip_ws(text, start + #value.raw);
     if (end != #text) return .{ Err: .{ TrailingData: end } };
     return .{ Ok: value };
 }
 
-/// Validates one complete JSON document.
-pub/ fn validate_value(text: &[u8]) void!ParseError {
-    _ = parse_value(text).!;
+/// Validates one complete JSON document using an explicit parser stack.
+pub/ fn validate_value(
+    alloc: &mut base.mem.alloc.Allocator,
+    text: &[u8],
+) void!ParseError {
+    _ = parse_value(alloc, text).!;
     return .{ Ok: {} };
 }
 
 impl &[u8] {
     /// Parses this byte slice as one complete JSON value.
-    pub fn parse_json() Value!ParseError {
-        return parse_value(self);
+    ///
+    /// `alloc` is used only for temporary parser stack storage. The returned
+    /// value borrows this slice.
+    pub fn parse_json(alloc: &mut base.mem.alloc.Allocator) Value!ParseError {
+        return parse_value(alloc, self);
     }
 
     /// Validates this byte slice as one complete JSON value.
-    pub fn validate_json() void!ParseError {
-        return validate_value(self);
+    ///
+    /// `alloc` is used only for temporary parser stack storage.
+    pub fn validate_json(alloc: &mut base.mem.alloc.Allocator) void!ParseError {
+        return validate_value(alloc, self);
     }
 }

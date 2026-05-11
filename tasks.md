@@ -35,12 +35,12 @@ incubator experiment with a redesigned public surface, not a file move.
 
 - [x] Implement allocation-free validation and complete-value parsing.
 - [x] Preserve byte offsets for structured parse errors.
-- [ ] Add diagnostic location helpers.
+- [x] Add diagnostic location helpers.
 - [~] Expose borrowed scalar views:
   - [x] `is_null`, `bool_value`, `number_text`
   - [x] `string_raw`, decoded string sizing/writing/cloning
   - [x] strict integer decoding through `i64_value`
-  - [ ] strict float decoding
+  - [x] strict float decoding
 - [x] Expose borrowed container cursors:
   - array cursor with `next()`
   - object cursor with entries that expose key and value views
@@ -88,7 +88,7 @@ incubator experiment with a redesigned public surface, not a file move.
   - [x] borrowed object/array traversal
   - [x] string escape decoding
   - [x] integer errors
-  - [ ] float errors
+  - [x] float errors
   - [x] duplicate-key first-match behavior
   - [~] owned mutation and rendering; root replacement and rendering covered,
     fine-grained mutation pending

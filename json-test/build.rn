@@ -1,0 +1,7 @@
+//! Build-time resource wiring for the extended JSON conformance runner.
+
+use craft.builder;
+
+pub fn build(b: &mut builder.Builder) void {
+    b.define_string("JSON_TEST_SUITE_ROOT", b.resource_root("JSONTestSuite"));
+}

@@ -12,8 +12,13 @@ enum AppError {
     Render: json.RenderError,
 }
 
+// Keeps the README-shaped fluent API path compiling as a real program.
 fn app() void!AppError {
-    let .{ Ok: value } = "{\"name\":\"kern\",\"enabled\":true}".parse_json() else {
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let .{ Ok: value } = "{\"name\":\"kern\",\"enabled\":true}".parse_json(alloc) else {
         .{ Err: err } => return .{ Err: .{ Parse: err } },
     };
 
@@ -22,7 +27,7 @@ fn app() void!AppError {
     };
     let mut object = object0;
     let lookup = object..&;
-    let .{ Ok: enabled } = lookup.find("enabled") else {
+    let .{ Ok: enabled } = lookup.find(alloc, "enabled") else {
         .{ Err: err } => return .{ Err: .{ Key: err } },
     };
     let .{ Some: flag } = enabled else return .{ Err: .{ Parse: .EmptyInput } };
@@ -34,19 +39,15 @@ fn app() void!AppError {
     }
 
     let mut out = [32]u8.{undef};
-    _ = value.render_compact(out..&[0 .. 32])
+    _ = value.render_compact(alloc, out..&[0 .. 32])
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
-
-    let page = page()..&;
-    let alloc = gpa().on(page)..&;
-    defer alloc.deinit();
 
     let mut compact = string();
     defer compact..&.deinit(alloc);
     let mut string_writer = compact..&.writer(alloc);
     let writer = &mut Write.{ string_writer..& };
-    _ = value.write_compact(writer)
+    _ = value.write_compact(alloc, writer)
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .!;
 
@@ -57,10 +58,11 @@ fn app() void!AppError {
         .!;
     let mut doc = doc0;
     defer doc..&.deinit(alloc);
-    _ = doc.&.root();
+    _ = doc.&.root(alloc);
     return .{ Ok: {} };
 }
 
+// Test executable entry point for compile-time API coverage.
 fn main() i32 {
     let .{ Ok: _ } = app() else return 1;
     return 0;

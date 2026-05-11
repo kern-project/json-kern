@@ -4,6 +4,25 @@
 //! source offsets for parser diagnostics.
 
 use ..{Kind, ParseError, Value};
+use base.coll.List;
+use base.mem.alloc.{AllocError, Allocator};
+
+enum Frame {
+    ArrayValueOrEnd,
+    ArrayCommaOrEnd,
+    ObjectKeyOrEnd,
+    ObjectColon,
+    ObjectValue,
+    ObjectCommaOrEnd,
+};
+
+// Preserves parser-stack allocation failures in the parse error domain.
+fn wrap_alloc_error(err: AllocError) ParseError {
+    return match (err) {
+        .CapacityOverflow => .CapacityOverflow,
+        .OutOfMemory => .OutOfMemory,
+    };
+}
 
 /// Returns `true` for JSON whitespace bytes.
 pub/ fn is_ws(byte: u8) bool {
@@ -55,6 +74,7 @@ pub/ fn bytes_eq(lhs: &[u8], rhs: &[u8]) bool {
     return true;
 }
 
+// Matches a fixed JSON literal and returns the first byte after it.
 fn literal_end(
     text: &[u8],
     start: usize,
@@ -70,6 +90,7 @@ fn literal_end(
 /// Returns the byte offset after a complete JSON string.
 pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
     let mut i = start + 1;
+    // String scanning jumps over escapes and stops at the first closing quote.
     while (i < #text) {
         let byte = text.[i];
         if (byte == b'"') return .{ Ok: i + 1 };
@@ -108,7 +129,8 @@ pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
     return .{ Err: .{ UnterminatedString: start } };
 }
 
-fn number_end(text: &[u8], start: usize) usize!ParseError {
+/// Returns the byte offset after a JSON number.
+pub/ fn number_end(text: &[u8], start: usize) usize!ParseError {
     let mut i = start;
     if (text.[i] == b'-') {
         i += 1;
@@ -154,16 +176,14 @@ fn number_end(text: &[u8], start: usize) usize!ParseError {
     return .{ Ok: i };
 }
 
-/// Returns the byte offset after a complete JSON value.
-pub/ fn value_end(text: &[u8], start: usize) usize!ParseError {
+// Dispatches scalar JSON values that do not need container stack state.
+fn scalar_end(text: &[u8], start: usize) usize!ParseError {
     if (start >= #text) return .{ Err: .UnexpectedEof };
     return match (text.[start]) {
         b'n' => literal_end(text, start, "null"),
         b't' => literal_end(text, start, "true"),
         b'f' => literal_end(text, start, "false"),
         b'"' => string_end(text, start),
-        b'[' => array_end(text, start),
-        b'{' => object_end(text, start),
         b'-' => number_end(text, start),
         b'0' => number_end(text, start),
         b'1' => number_end(text, start),
@@ -179,46 +199,128 @@ pub/ fn value_end(text: &[u8], start: usize) usize!ParseError {
     };
 }
 
-fn array_end(text: &[u8], start: usize) usize!ParseError {
-    let mut i = skip_ws(text, start + 1);
-    if (i >= #text) return .{ Err: .UnexpectedEof };
-    if (text.[i] == b']') return .{ Ok: i + 1 };
+// Adds one container parser frame through the caller-visible allocator.
+fn push_frame(
+    stack: &mut List[Frame],
+    alloc: &mut Allocator,
+    frame: Frame,
+) void!ParseError {
+    return stack.try_push(alloc, frame).map_err(wrap_alloc_error);
+}
 
+// Starts either a nested container frame or a complete scalar value.
+fn begin_value(
+    text: &[u8],
+    stack: &mut List[Frame],
+    alloc: &mut Allocator,
+    index: usize,
+) usize!ParseError {
+    if (index >= #text) return .{ Err: .UnexpectedEof };
+    return match (text.[index]) {
+        b'[' => {
+            push_frame(stack, alloc, .ArrayValueOrEnd).!;
+            .{ Ok: index + 1 }
+        },
+        b'{' => {
+            push_frame(stack, alloc, .ObjectKeyOrEnd).!;
+            .{ Ok: index + 1 }
+        },
+        _ => scalar_end(text, index),
+    };
+}
+
+/// Returns the byte offset after a complete JSON value.
+pub/ fn value_end(
+    alloc: &mut Allocator,
+    text: &[u8],
+    start: usize,
+) usize!ParseError {
+    let stack = List[Frame].{}..&;
+    defer stack.deinit(alloc);
+
+    let mut i = begin_value(
+        text,
+        stack,
+        alloc,
+        start,
+    ).!;
     while (true) {
-        let end = value_end(text, i).!;
-        i = skip_ws(text, end);
+        let .{ Some: state } = stack.pop() else return .{ Ok: i };
+        i = skip_ws(text, i);
         if (i >= #text) return .{ Err: .UnexpectedEof };
-        if (text.[i] == b']') return .{ Ok: i + 1 };
-        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
-        i = skip_ws(text, i + 1);
-        if (i >= #text) return .{ Err: .UnexpectedEof };
+
+        match (state) {
+            .ArrayValueOrEnd => {
+                if (text.[i] == b']') {
+                    i += 1;
+                    continue;
+                }
+                push_frame(stack, alloc, .ArrayCommaOrEnd).!;
+                i = begin_value(
+                    text,
+                    stack,
+                    alloc,
+                    i,
+                ).!;
+            },
+            .ArrayCommaOrEnd => {
+                if (text.[i] == b']') {
+                    i += 1;
+                    continue;
+                }
+                if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+                push_frame(stack, alloc, .ArrayCommaOrEnd).!;
+                i = skip_ws(text, i + 1);
+                if (i >= #text) return .{ Err: .UnexpectedEof };
+                i = begin_value(
+                    text,
+                    stack,
+                    alloc,
+                    i,
+                ).!;
+            },
+            .ObjectKeyOrEnd => {
+                if (text.[i] == b'}') {
+                    i += 1;
+                    continue;
+                }
+                if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+                push_frame(stack, alloc, .ObjectColon).!;
+                i = string_end(text, i).!;
+            },
+            .ObjectColon => {
+                if (text.[i] != b':') return .{ Err: .{ MissingColon: i } };
+                push_frame(stack, alloc, .ObjectValue).!;
+                i = skip_ws(text, i + 1);
+                if (i >= #text) return .{ Err: .UnexpectedEof };
+                i = begin_value(
+                    text,
+                    stack,
+                    alloc,
+                    i,
+                ).!;
+            },
+            .ObjectValue => {
+                push_frame(stack, alloc, .ObjectCommaOrEnd).!;
+            },
+            .ObjectCommaOrEnd => {
+                if (text.[i] == b'}') {
+                    i += 1;
+                    continue;
+                }
+                if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+                i = skip_ws(text, i + 1);
+                if (i >= #text) return .{ Err: .UnexpectedEof };
+                if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+                push_frame(stack, alloc, .ObjectColon).!;
+                i = string_end(text, i).!;
+            },
+        }
     }
     return .{ Err: .UnexpectedEof };
 }
 
-fn object_end(text: &[u8], start: usize) usize!ParseError {
-    let mut i = skip_ws(text, start + 1);
-    if (i >= #text) return .{ Err: .UnexpectedEof };
-    if (text.[i] == b'}') return .{ Ok: i + 1 };
-
-    while (true) {
-        if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
-        let key_end = string_end(text, i).!;
-        i = skip_ws(text, key_end);
-        if (i >= #text) return .{ Err: .UnexpectedEof };
-        if (text.[i] != b':') return .{ Err: .{ MissingColon: i } };
-        i = skip_ws(text, i + 1);
-        let val_end = value_end(text, i).!;
-        i = skip_ws(text, val_end);
-        if (i >= #text) return .{ Err: .UnexpectedEof };
-        if (text.[i] == b'}') return .{ Ok: i + 1 };
-        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
-        i = skip_ws(text, i + 1);
-        if (i >= #text) return .{ Err: .UnexpectedEof };
-    }
-    return .{ Err: .UnexpectedEof };
-}
-
+// Maps a validated first byte to the borrowed value kind.
 fn kind_from_first(byte: u8) Kind {
     return match (byte) {
         b'n' => .Null,
@@ -233,6 +335,16 @@ fn kind_from_first(byte: u8) Kind {
 
 /// Parses one value at a known non-whitespace starting offset.
 pub/ fn parse_at(text: &[u8], start: usize) Value!ParseError {
-    let end = value_end(text, start).!;
+    let end = scalar_end(text, start).!;
+    return .{ Ok: .{ kind: kind_from_first(text.[start]), raw: text.&[start .. end] } };
+}
+
+/// Parses one value at a known non-whitespace starting offset using a stack.
+pub/ fn parse_at_with_stack(
+    alloc: &mut Allocator,
+    text: &[u8],
+    start: usize,
+) Value!ParseError {
+    let end = value_end(alloc, text, start).!;
     return .{ Ok: .{ kind: kind_from_first(text.[start]), raw: text.&[start .. end] } };
 }
