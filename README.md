@@ -19,7 +19,7 @@ Local development can use a path dependency:
 
 ```toml
 [dependencies]
-json = { path = "../json-kern" }
+json = { path = "../json-kern/json" }
 ```
 
 ```kern
@@ -124,14 +124,23 @@ the repeated lookup cost matters.
 
 The library source is split by responsibility:
 
-- `src/parser.rn` and `src/bytes.rn`: allocation-free grammar scanning.
-- `src/value.rn`: borrowed `Value`, array cursor, object cursor, and key APIs.
-- `src/decode.rn`: JSON string and key escape decoding.
-- `src/render.rn`: compact rendering into buffers and `base.io.Write`.
-- `src/document.rn`: owned compact `Document`.
-- `src/format.rn`: diagnostic formatting and exact error equality.
+- `json/src/parser.rn` and `json/src/bytes.rn`: allocation-free grammar
+  scanning.
+- `json/src/value.rn`: borrowed `Value`, array cursor, object cursor, and key
+  APIs.
+- `json/src/decode.rn`: JSON string and key escape decoding.
+- `json/src/render.rn`: compact rendering into buffers and `base.io.Write`.
+- `json/src/document.rn`: owned compact `Document`.
+- `json/src/format.rn`: diagnostic formatting and exact error equality.
 
-Run the published package checks from the repository root:
+The repository root is a Craft workspace for the published package and local
+tools:
+
+- `json`: publishable library package.
+- `json-test`: extended conformance runner.
+- `json-bench`: benchmark runner.
+
+Run workspace checks from the repository root:
 
 ```sh
 craft fmt --check --verbose --color never
@@ -142,8 +151,7 @@ craft style --verbose --color never
 The heavier conformance runner lives in `json-test`:
 
 ```sh
-cd json-test
-craft run --color never
+craft run --project-path json-test --color never
 ```
 
 It carries RFC 8259 and JSONTestSuite-shaped `y_`, `n_`, and `i_` cases. A
@@ -153,12 +161,11 @@ mirrored external corpus such as `nst/JSONTestSuite` can be placed under
 The benchmark tool lives in `json-bench`:
 
 ```sh
-cd json-bench
-craft run --color never -- 10000 parse
-craft run --color never -- 10000 validate
-craft run --color never -- 10000 compact
-craft run --color never -- 10000 lookup
-craft run --color never -- 10000 decode
+craft run --project-path json-bench --color never -- 10000 parse
+craft run --project-path json-bench --color never -- 10000 validate
+craft run --project-path json-bench --color never -- 10000 compact
+craft run --project-path json-bench --color never -- 10000 lookup
+craft run --project-path json-bench --color never -- 10000 decode
 ```
 
 Pass a JSON file path as the third argument to benchmark a larger corpus.

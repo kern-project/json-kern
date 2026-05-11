@@ -11,4 +11,4 @@ name = "json-bench"
 root = "src/main.rn"
 
 [dependencies]
-json = { path = ".." }
+json = { workspace = true }

@@ -2,7 +2,13 @@
 
 Micro-benchmarks for `json-kern`.
 
-Run the generated workload:
+Run the generated workload from the workspace root:
+
+```sh
+craft run --project-path json-bench
+```
+
+Or from this directory:
 
 ```sh
 craft run

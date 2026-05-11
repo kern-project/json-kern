@@ -8,7 +8,13 @@ The built-in cases follow the public JSONTestSuite convention:
 - `n_` cases must reject.
 - `i_` cases document implementation-defined pressure cases.
 
-Run from this directory with:
+Run from the workspace root with:
+
+```sh
+craft run --project-path json-test
+```
+
+Or from this directory with:
 
 ```sh
 craft run
