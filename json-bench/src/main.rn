@@ -1,0 +1,346 @@
+//! JSON parser micro-benchmark and smoke workload.
+
+use base.coll.{String, range, string};
+use base.mem.alloc.gpa;
+use json;
+use std.fs;
+use std.proc;
+use std.time;
+use sys.mem.page;
+
+const DEFAULT_ITERATIONS = usize.{5000};
+const DEFAULT_INPUT_LABEL = "generated-api-payload";
+const SAMPLE_REPETITIONS = usize.{1200};
+
+const HEADER =
+    \\{
+    \\  "items": [
+;
+const ROW =
+    \\    {
+    \\      "id": 123,
+    \\      "name": "kern-json",
+    \\      "enabled": true,
+    \\      "tags": ["compiler", "ecosystem", "network"],
+    \\      "metrics": {"parse": 1.25e3, "alloc": 0, "ok": true}
+    \\    }
+;
+const ROW_SEP =
+    \\,
+;
+const FOOTER =
+    \\  ],
+    \\  "meta": {"source": "generated", "version": 1}
+    \\}
+;
+const DECODE_SAMPLE = "\"kern\\njson\\u002Fbench\\uD83D\\uDE80\"";
+
+struct BenchInput {
+    storage: String = String.{},
+    label_storage: String = String.{},
+    label: &[u8] = "",
+    text: &[u8] = "",
+};
+
+impl &mut BenchInput {
+    fn deinit(alloc: &mut base.mem.alloc.Allocator) void {
+        self.storage..&.deinit(alloc);
+        self.label_storage..&.deinit(alloc);
+        self.* = BenchInput.{};
+    }
+}
+
+fn parse_iterations(text: &[u8]) usize {
+    if (#text == 0) return usize.{0};
+    let mut value = usize.{0};
+    for (byte: text.iter()) {
+        if (byte < b'0' or byte > b'9') return usize.{0};
+        let next = value * 10 + (byte - b'0') as usize;
+        if (next < value) return usize.{0};
+        value = next;
+    }
+    return value;
+}
+
+fn print_stats(
+    label: &[u8],
+    input_label: &[u8],
+    bytes_per_iter: usize,
+    iterations: usize,
+    elapsed: time.Duration,
+    sink: usize,
+) void {
+    let total_bytes = (bytes_per_iter as u64) * (iterations as u64);
+    "{} input={} bytes={} iterations={} elapsed_ms={} ops_per_sec={} bytes_per_sec={} sink={}".fmt(
+        .{
+            label,
+            input_label,
+            bytes_per_iter,
+            iterations,
+            elapsed.as_millis(),
+            elapsed.units_per_sec(iterations as u64),
+            elapsed.units_per_sec(total_bytes),
+            sink,
+        }
+    ).println();
+}
+
+fn push(
+    out: &mut String,
+    alloc: &mut base.mem.alloc.Allocator,
+    text: &[u8],
+) bool {
+    let .{ Ok: _ } = out.try_push_str(alloc, text) else return false;
+    return true;
+}
+
+fn build_sample(alloc: &mut base.mem.alloc.Allocator) ?String {
+    let mut out = string();
+    let reserve_bytes = #HEADER
+        + #FOOTER
+        + SAMPLE_REPETITIONS * (#ROW + #ROW_SEP);
+    let .{ Ok: _ } = out..&.try_reserve(alloc, reserve_bytes) else return .None;
+    if (!push(out..&, alloc, HEADER)) return .None;
+    let mut i = usize.{0};
+    while (i < SAMPLE_REPETITIONS) {
+        if (i > 0 and !push(out..&, alloc, ROW_SEP)) return .None;
+        if (!push(out..&, alloc, ROW)) return .None;
+        i += 1;
+    }
+    if (!push(out..&, alloc, FOOTER)) return .None;
+    return .{ Some: out };
+}
+
+fn make_input(
+    alloc: &mut base.mem.alloc.Allocator,
+    storage: String,
+    label_text: &[u8],
+) ?BenchInput {
+    let mut label_storage = string();
+    let .{ Ok: _ } = label_storage..&.try_push_str(alloc, label_text) else {
+        return .None;
+    };
+    return .{ Some: BenchInput.{
+        storage: storage,
+        label_storage: label_storage,
+        label: label_storage.&.as_str(),
+        text: storage.&.as_str(),
+    } };
+}
+
+fn load_input(alloc: &mut base.mem.alloc.Allocator, path: ?&[u8]) BenchInput!fs.Error {
+    match (path) {
+        .{ Some: value } => {
+            if (value == "-") {
+                let mut stdin = fs.stdin();
+                let .{ Ok: storage } = stdin..&.read_to_string(alloc) else {
+                    .{ Err: err } => return .{ Err: err },
+                };
+                let .{ Some: input } = make_input(alloc, storage, "stdin") else {
+                    return .{ Err: fs.Error.OutOfMemory };
+                };
+                return .{ Ok: input };
+            }
+            let .{ Ok: storage } = value.path().read_to_string(alloc) else {
+                .{ Err: err } => return .{ Err: err },
+            };
+            let .{ Some: input } = make_input(alloc, storage, value) else {
+                return .{ Err: fs.Error.OutOfMemory };
+            };
+            return .{ Ok: input };
+        },
+        .None => {
+            let .{ Some: storage } = build_sample(alloc) else {
+                return .{ Err: fs.Error.OutOfMemory };
+            };
+            let .{ Some: input } = make_input(alloc, storage, DEFAULT_INPUT_LABEL) else {
+                return .{ Err: fs.Error.OutOfMemory };
+            };
+            return .{ Ok: input };
+        },
+    }
+}
+
+fn bench_parse(
+    iterations: usize,
+    input_label: &[u8],
+    text: &[u8],
+) bool {
+    let mut sink = usize.{0};
+    let start = time.monotonic().now();
+    for (_: range[usize](0, iterations)) {
+        let .{ Ok: value } = text.parse_json() else return false;
+        sink += #value.raw;
+        sink += match (value.kind) {
+            .Array => 1,
+            .Object => 2,
+            .String => 3,
+            .Number => 4,
+            .Bool => 5,
+            .Null => 6,
+        };
+    }
+    print_stats(
+        "parse",
+        input_label,
+        #text,
+        iterations,
+        start.elapsed(),
+        sink,
+    );
+    return true;
+}
+
+fn bench_validate(
+    iterations: usize,
+    input_label: &[u8],
+    text: &[u8],
+) bool {
+    let mut sink = usize.{0};
+    let start = time.monotonic().now();
+    for (_: range[usize](0, iterations)) {
+        let .{ Ok: _ } = text.validate_json() else return false;
+        sink += #text;
+    }
+    print_stats(
+        "validate",
+        input_label,
+        #text,
+        iterations,
+        start.elapsed(),
+        sink,
+    );
+    return true;
+}
+
+fn bench_compact(
+    iterations: usize,
+    input_label: &[u8],
+    text: &[u8],
+) bool {
+    let mut out = [262144]u8.{undef};
+    if (#text > #out) return false;
+    let mut sink = usize.{0};
+    let start = time.monotonic().now();
+    for (_: range[usize](0, iterations)) {
+        let .{ Ok: written } = text.render_json_compact(out..&[0 .. #out]) else return false;
+        sink += written;
+    }
+    print_stats(
+        "compact",
+        input_label,
+        #text,
+        iterations,
+        start.elapsed(),
+        sink,
+    );
+    return true;
+}
+
+fn bench_lookup(
+    iterations: usize,
+    input_label: &[u8],
+    text: &[u8],
+) bool {
+    let mut sink = usize.{0};
+    let .{ Ok: root } = text.parse_json() else return false;
+    let start = time.monotonic().now();
+    for (_: range[usize](0, iterations)) {
+        let .{ Some: mut object0 } = root.object() else return false;
+        let object = object0..&;
+        let .{ Ok: found } = object.find("meta") else return false;
+        let .{ Some: value } = found else return false;
+        sink += #value.raw;
+    }
+    print_stats(
+        "lookup",
+        input_label,
+        #text,
+        iterations,
+        start.elapsed(),
+        sink,
+    );
+    return true;
+}
+
+fn bench_decode(iterations: usize) bool {
+    let .{ Ok: value } = DECODE_SAMPLE.parse_json() else return false;
+    let .{ Ok: needed } = value.string_decoded_len() else return false;
+    let mut out = [64]u8.{undef};
+    if (needed > #out) return false;
+    let mut sink = usize.{0};
+    let start = time.monotonic().now();
+    for (_: range[usize](0, iterations)) {
+        let .{ Ok: written } = value.write_string(out..&[0 .. #out]) else return false;
+        sink += written;
+    }
+    print_stats(
+        "decode",
+        "inline",
+        #DECODE_SAMPLE,
+        iterations,
+        start.elapsed(),
+        sink,
+    );
+    return true;
+}
+
+fn run_bench(
+    name: &[u8],
+    iterations: usize,
+    input: &BenchInput,
+) bool {
+    if (name == "parse") return bench_parse(iterations, input.label, input.text);
+    if (name == "validate") return bench_validate(iterations, input.label, input.text);
+    if (name == "compact") return bench_compact(iterations, input.label, input.text);
+    if (name == "lookup") return bench_lookup(iterations, input.label, input.text);
+    if (name == "decode") return bench_decode(iterations);
+    return false;
+}
+
+fn main(argc: i32, argv: &&u8) i32 {
+    let args = proc.args(argc, argv);
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let iterations = match (args.get(1)) {
+        .{ Some: value } => {
+            let parsed = parse_iterations(value);
+            if (parsed == 0) {
+                "invalid iteration count: {}".fmt(.{ value, }).println();
+                return 1;
+            }
+            parsed
+        },
+        .None => DEFAULT_ITERATIONS,
+    };
+    let mode = args.get(2);
+    let input_path = args.get(3);
+    let mut input = match (load_input(gpa, input_path)) {
+        .{ Ok: value } => value,
+        .{ Err: _ } => {
+            "failed to load JSON benchmark input".println();
+            return 1;
+        },
+    };
+    defer input..&.deinit(gpa);
+
+    match (mode) {
+        .{ Some: name } => {
+            if (!run_bench(name, iterations, input..&)) {
+                "unknown or failed bench: {}".fmt(.{ name, }).println();
+                return 1;
+            }
+            return 0;
+        },
+        .None => {},
+    }
+
+    if (!bench_parse(iterations, input.label, input.text)) return 1;
+    if (!bench_validate(iterations, input.label, input.text)) return 1;
+    if (!bench_compact(iterations, input.label, input.text)) return 1;
+    if (!bench_lookup(iterations, input.label, input.text)) return 1;
+    if (!bench_decode(iterations)) return 1;
+    return 0;
+}

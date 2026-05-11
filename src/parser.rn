@@ -1,0 +1,33 @@
+//! Complete-document borrowed JSON parsing.
+
+use ..{ParseError, Value};
+use ..bytes.{parse_at, skip_ws};
+
+/// Parses one complete borrowed JSON value.
+pub/ fn parse_value(text: &[u8]) Value!ParseError {
+    let start = skip_ws(text, 0);
+    if (start >= #text) return .{ Err: .EmptyInput };
+
+    let value = parse_at(text, start).!;
+    let end = skip_ws(text, start + #value.raw);
+    if (end != #text) return .{ Err: .{ TrailingData: end } };
+    return .{ Ok: value };
+}
+
+/// Validates one complete JSON document.
+pub/ fn validate_value(text: &[u8]) void!ParseError {
+    _ = parse_value(text).!;
+    return .{ Ok: {} };
+}
+
+impl &[u8] {
+    /// Parses this byte slice as one complete JSON value.
+    pub fn parse_json() Value!ParseError {
+        return parse_value(self);
+    }
+
+    /// Validates this byte slice as one complete JSON value.
+    pub fn validate_json() void!ParseError {
+        return validate_value(self);
+    }
+}

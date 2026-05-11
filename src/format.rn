@@ -1,0 +1,201 @@
+//! Diagnostic formatting and exact equality implementations for JSON errors.
+
+use base.io.{Formatable, Write};
+
+use ..{
+    DocumentError,
+    KeyError,
+    ParseError,
+    RenderError,
+    StringError,
+};
+
+impl &ParseError : Formatable {
+    /// Writes a stable diagnostic name for the parse error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .EmptyInput => _ = writer.write("json.ParseError.EmptyInput"),
+            .{ UnexpectedByte: offset } => {
+                _ = "json.ParseError.UnexpectedByte({})".fmt(.{offset}).write_to(writer);
+            },
+            .UnexpectedEof => _ = writer.write("json.ParseError.UnexpectedEof"),
+            .{ InvalidNumber: offset } => {
+                _ = "json.ParseError.InvalidNumber({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ InvalidEscape: offset } => {
+                _ = "json.ParseError.InvalidEscape({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ UnterminatedString: offset } => {
+                _ = "json.ParseError.UnterminatedString({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ MissingColon: offset } => {
+                _ = "json.ParseError.MissingColon({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ MissingCommaOrEnd: offset } => {
+                _ = "json.ParseError.MissingCommaOrEnd({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ TrailingData: offset } => {
+                _ = "json.ParseError.TrailingData({})".fmt(.{offset}).write_to(writer);
+            },
+        }
+    }
+}
+
+impl &StringError : Formatable {
+    /// Writes a stable diagnostic name for the string error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .NotString => _ = writer.write("json.StringError.NotString"),
+            .{ InvalidEscape: offset } => {
+                _ = "json.StringError.InvalidEscape({})".fmt(.{offset}).write_to(writer);
+            },
+            .{ InvalidUnicode: offset } => {
+                _ = "json.StringError.InvalidUnicode({})".fmt(.{offset}).write_to(writer);
+            },
+            .ShortOutput => _ = writer.write("json.StringError.ShortOutput"),
+            .CapacityOverflow => _ = writer.write("json.StringError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.StringError.OutOfMemory"),
+        }
+    }
+}
+
+impl &KeyError : Formatable {
+    /// Writes a stable diagnostic name for the key lookup error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .{ Parse: err } => {
+                _ = writer.write("json.KeyError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+            .{ String: err } => {
+                _ = writer.write("json.KeyError.String(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
+impl &RenderError : Formatable {
+    /// Writes a stable diagnostic name for the render error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .ShortOutput => _ = writer.write("json.RenderError.ShortOutput"),
+            .WriteFailed => _ = writer.write("json.RenderError.WriteFailed"),
+            .{ Parse: err } => {
+                _ = writer.write("json.RenderError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
+impl &DocumentError : Formatable {
+    /// Writes a stable diagnostic name for the document error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .CapacityOverflow => _ = writer.write("json.DocumentError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.DocumentError.OutOfMemory"),
+            .{ Parse: err } => {
+                _ = writer.write("json.DocumentError.Parse(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+            .{ Render: err } => {
+                _ = writer.write("json.DocumentError.Render(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+        }
+    }
+}
+
+impl ParseError : Eq[ParseError] {
+    /// Compares parse error variants and offsets exactly.
+    pub fn eq(other: ParseError) bool {
+        return match (self) {
+            .EmptyInput => match (other) { .EmptyInput => true, _ => false },
+            .UnexpectedEof => match (other) { .UnexpectedEof => true, _ => false },
+            .{ UnexpectedByte: a } => match (other) {
+                .{ UnexpectedByte: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidNumber: a } => match (other) {
+                .{ InvalidNumber: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidEscape: a } => match (other) {
+                .{ InvalidEscape: b } => a == b,
+                _ => false,
+            },
+            .{ UnterminatedString: a } => match (other) {
+                .{ UnterminatedString: b } => a == b,
+                _ => false,
+            },
+            .{ MissingColon: a } => match (other) {
+                .{ MissingColon: b } => a == b,
+                _ => false,
+            },
+            .{ MissingCommaOrEnd: a } => match (other) {
+                .{ MissingCommaOrEnd: b } => a == b,
+                _ => false,
+            },
+            .{ TrailingData: a } => match (other) {
+                .{ TrailingData: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl RenderError : Eq[RenderError] {
+    /// Compares render error variants and nested parse errors exactly.
+    pub fn eq(other: RenderError) bool {
+        return match (self) {
+            .ShortOutput => match (other) { .ShortOutput => true, _ => false },
+            .WriteFailed => match (other) { .WriteFailed => true, _ => false },
+            .{ Parse: a } => match (other) {
+                .{ Parse: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl StringError : Eq[StringError] {
+    /// Compares string error variants and offsets exactly.
+    pub fn eq(other: StringError) bool {
+        return match (self) {
+            .NotString => match (other) { .NotString => true, _ => false },
+            .ShortOutput => match (other) { .ShortOutput => true, _ => false },
+            .CapacityOverflow => match (other) { .CapacityOverflow => true, _ => false },
+            .OutOfMemory => match (other) { .OutOfMemory => true, _ => false },
+            .{ InvalidEscape: a } => match (other) {
+                .{ InvalidEscape: b } => a == b,
+                _ => false,
+            },
+            .{ InvalidUnicode: a } => match (other) {
+                .{ InvalidUnicode: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}
+
+impl KeyError : Eq[KeyError] {
+    /// Compares key lookup error variants exactly.
+    pub fn eq(other: KeyError) bool {
+        return match (self) {
+            .{ Parse: a } => match (other) {
+                .{ Parse: b } => a == b,
+                _ => false,
+            },
+            .{ String: a } => match (other) {
+                .{ String: b } => a == b,
+                _ => false,
+            },
+        };
+    }
+}

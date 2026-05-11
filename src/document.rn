@@ -1,0 +1,89 @@
+//! Owned compact JSON document support.
+
+use base.mem.alloc.{AllocError, Allocator};
+
+use ..{
+    Document,
+    DocumentError,
+    ParseError,
+    RenderError,
+    Value,
+};
+use ..parser.{parse_value, validate_value};
+use ..render.render_into;
+
+fn wrap_alloc_error(err: AllocError) DocumentError {
+    return match (err) {
+        .CapacityOverflow => .CapacityOverflow,
+        .OutOfMemory => .OutOfMemory,
+    };
+}
+
+/// Validates, compacts, and replaces document storage.
+pub/ fn compact_into(
+    storage: &mut base.coll.String,
+    alloc: &mut Allocator,
+    text: &[u8],
+) void!DocumentError {
+    validate_value(text).map_err([](err: ParseError) DocumentError {
+        return .{ Parse: err };
+    }).!;
+
+    storage.clear();
+    let out = storage.try_append_uninit(alloc, #text)
+        .map_err(wrap_alloc_error)
+        .!;
+    let written = render_into(text, out)
+        .map_err([](err: RenderError) DocumentError { return .{ Render: err }; })
+        .!;
+    storage.truncate(written);
+    return .{ Ok: {} };
+}
+
+/// Parses and owns a compact JSON document.
+pub/ fn parse_document_impl(alloc: &mut Allocator, text: &[u8]) Document!DocumentError {
+    let value = parse_value(text)
+        .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
+        .!;
+    return value.clone_document(alloc);
+}
+
+impl &[u8] {
+    /// Parses and owns this byte slice as a compact document.
+    pub fn parse_json_document(alloc: &mut Allocator) Document!DocumentError {
+        return parse_document_impl(alloc, self);
+    }
+}
+
+impl &Document {
+    /// Returns the compact document text.
+    pub fn as_json() &[u8] {
+        return self.storage.&.as_str();
+    }
+
+    /// Returns the root value borrowed from this document.
+    pub fn root() Value {
+        let .{ Ok: value } = parse_value(self.as_json()) else {
+            @trap();
+        };
+        return value;
+    }
+}
+
+impl &mut Document {
+    /// Releases owned document storage.
+    pub fn deinit(alloc: &mut Allocator) void {
+        self.storage..&.deinit(alloc);
+        self.* = Document.{};
+    }
+
+    /// Replaces the root with a complete borrowed JSON value.
+    pub fn replace_root(alloc: &mut Allocator, value: Value) void!DocumentError {
+        return compact_into(self.storage..&, alloc, value.raw);
+    }
+
+    /// Replaces the root with source JSON after validating and compacting it.
+    pub fn replace_root_json(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
+        return compact_into(self.storage..&, alloc, text);
+    }
+}

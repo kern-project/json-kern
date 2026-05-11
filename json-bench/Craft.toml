@@ -1,0 +1,14 @@
+[package]
+name = "json-bench"
+version = "0.1.0"
+kern = "0.7.5"
+publish = false
+description = "Micro-benchmarks for json-kern"
+license = "MIT"
+
+[[bin]]
+name = "json-bench"
+root = "src/main.rn"
+
+[dependencies]
+json = { path = ".." }

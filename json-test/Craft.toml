@@ -1,0 +1,14 @@
+[package]
+name = "json-test"
+version = "0.1.0"
+kern = "0.7.5"
+publish = false
+description = "Extended conformance tests for json-kern"
+license = "MIT"
+
+[[bin]]
+name = "json-test"
+root = "src/main.rn"
+
+[dependencies]
+json = { path = ".." }

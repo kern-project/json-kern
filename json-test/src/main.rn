@@ -1,0 +1,215 @@
+//! Extended conformance checks for `json-kern`.
+//!
+//! The cases are shaped after RFC 8259 and the public JSONTestSuite naming
+//! convention: `y_` inputs must parse, `n_` inputs must reject, and `i_`
+//! inputs document implementation-defined pressure cases that should not crash.
+
+use base.test;
+use base.io.Write;
+use base.coll.string;
+use base.mem.alloc.gpa;
+use json;
+use std.io;
+use sys.mem.page;
+
+struct Case {
+    name: &[u8],
+    text: &[u8],
+};
+
+const VALID_CASES = [_]Case.{
+    .{ name: "y_literal_null", text: "null" },
+    .{ name: "y_literal_true", text: "true" },
+    .{ name: "y_literal_false", text: "false" },
+    .{ name: "y_string_empty", text: "\"\"" },
+    .{ name: "y_string_escapes", text: "\"\\\\\\/\\b\\f\\n\\r\\t\"" },
+    .{ name: "y_string_unicode_bmp", text: "\"\\u2603\"" },
+    .{ name: "y_string_unicode_pair", text: "\"\\uD834\\uDD1E\"" },
+    .{ name: "y_number_zero", text: "0" },
+    .{ name: "y_number_negative_zero", text: "-0" },
+    .{ name: "y_number_frac", text: "123.456" },
+    .{ name: "y_number_exp", text: "1.2e-3" },
+    .{ name: "y_array_empty", text: "[]" },
+    .{ name: "y_array_nested", text: "[[],[1,2,3],{\"a\":true}]" },
+    .{ name: "y_object_empty", text: "{}" },
+    .{ name: "y_object_nested", text: "{\"a\":{\"b\":[null,false,true]},\"c\":\"d\"}" },
+    .{ name: "y_whitespace", text: " \n\r\t { \"a\" : [ 1 , 2 ] } \t" },
+};
+
+const INVALID_CASES = [_]Case.{
+    .{ name: "n_empty", text: "" },
+    .{ name: "n_literal_partial", text: "tru" },
+    .{ name: "n_literal_trailing", text: "true false" },
+    .{ name: "n_number_leading_zero", text: "01" },
+    .{ name: "n_number_missing_int", text: "-.1" },
+    .{ name: "n_number_missing_frac_digit", text: "1." },
+    .{ name: "n_number_missing_exp_digit", text: "1e" },
+    .{ name: "n_string_bad_escape", text: "\"\\x\"" },
+    .{ name: "n_string_bad_unicode_hex", text: "\"\\u12X4\"" },
+    .{ name: "n_string_control_char", text: "\"\n\"" },
+    .{ name: "n_string_unterminated", text: "\"abc" },
+    .{ name: "n_array_trailing_comma", text: "[1,]" },
+    .{ name: "n_array_missing_comma", text: "[1 2]" },
+    .{ name: "n_object_unquoted_key", text: "{a:1}" },
+    .{ name: "n_object_missing_colon", text: "{\"a\" 1}" },
+    .{ name: "n_object_trailing_comma", text: "{\"a\":1,}" },
+};
+
+const IMPLEMENTATION_CASES = [_]Case.{
+    .{ name: "i_deep_small", text: "[[[[[0]]]]]" },
+    .{ name: "i_large_integer_text", text: "123456789012345678901234567890" },
+};
+
+fn check_valid_cases() void {
+    let t = test.report(io.stderr())..&;
+    for (case: VALID_CASES.iter()) {
+        case.text
+            .validate_json()
+            .should_ok()
+            .sum(@loc(), t);
+        let value = case.text
+            .parse_json()
+            .should_ok()
+            .sum(@loc(), t);
+        let mut compact = [256]u8.{undef};
+        let written = value
+            .render_compact(compact..&[0 .. #compact])
+            .should_ok()
+            .sum(@loc(), t);
+        compact.&[0 .. written]
+            .validate_json()
+            .should_ok()
+            .sum(@loc(), t);
+        _ = case.name;
+    }
+}
+
+fn check_invalid_cases() void {
+    let t = test.report(io.stderr())..&;
+    for (case: INVALID_CASES.iter()) {
+        _ = case.text
+            .validate_json()
+            .should_err()
+            .sum(@loc(), t);
+        _ = case.name;
+    }
+}
+
+fn check_implementation_cases() void {
+    let t = test.report(io.stderr())..&;
+    for (case: IMPLEMENTATION_CASES.iter()) {
+        case.text
+            .validate_json()
+            .should_ok()
+            .sum(@loc(), t);
+        _ = case.name;
+    }
+}
+
+fn check_strings_and_lookup() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let value = "{\"plain\":\"abc\",\"escaped\":\"a\\u002Fb\",\"music\":\"\\uD834\\uDD1E\"}"
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t);
+    let object = value.object().should_some().sum(@loc(), t)..&;
+
+    let escaped = object
+        .find("escaped")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    let mut decoded = escaped
+        .clone_string(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    defer decoded..&.deinit(alloc);
+    decoded.&.as_str()
+        .should()
+        .eq("a/b")
+        .sum(@loc(), t);
+
+    "\"\\uDEAD\""
+        .parse_json()
+        .should_ok()
+        .sum(@loc(), t)
+        .string_decoded_len()
+        .should_err()
+        .eq(json.StringError.{ InvalidUnicode: 0 })
+        .sum(@loc(), t);
+}
+
+fn check_document_roundtrip() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let mut doc = "{ \"items\" : [ { \"id\" : 1 }, { \"id\" : 2 } ] }"
+        .parse_json_document(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    defer doc..&.deinit(alloc);
+
+    doc.&.as_json()
+        .should()
+        .eq("{\"items\":[{\"id\":1},{\"id\":2}]}")
+        .sum(@loc(), t);
+    doc
+        ..&.replace_root_json(alloc, "{\"ok\":true}")
+        .should_ok()
+        .sum(@loc(), t);
+    doc.&.root()
+        .object()
+        .should_some()
+        .sum(@loc(), t)
+        ..&.find("ok")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t)
+        .bool_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+}
+
+fn check_writer() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let mut out = string();
+    defer out..&.deinit(alloc);
+    let mut string_writer = out..&.writer(alloc);
+    let writer = &mut Write.{ string_writer..& };
+    let count = "[ true, false, null, { \"a\" : \"b\" } ]"
+        .write_json_compact(writer)
+        .should_ok()
+        .sum(@loc(), t);
+    count
+        .should()
+        .eq(27)
+        .sum(@loc(), t);
+    out.&.as_str()
+        .should()
+        .eq("[true,false,null,{\"a\":\"b\"}]")
+        .sum(@loc(), t);
+}
+
+fn main() i32 {
+    check_valid_cases();
+    check_invalid_cases();
+    check_implementation_cases();
+    check_strings_and_lookup();
+    check_document_roundtrip();
+    check_writer();
+    return 0;
+}

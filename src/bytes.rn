@@ -1,0 +1,238 @@
+//! Byte-oriented JSON scanning helpers.
+//!
+//! These routines keep borrowed validation allocation-free and return exact
+//! source offsets for parser diagnostics.
+
+use ..{Kind, ParseError, Value};
+
+/// Returns `true` for JSON whitespace bytes.
+pub/ fn is_ws(byte: u8) bool {
+    return byte == b' '
+        or byte == b'\n'
+        or byte == b'\r'
+        or byte == b'\t';
+}
+
+/// JSON grammar only permits decimal digits in numbers and hex digits in
+/// `\uXXXX` string escapes.
+pub/ fn is_digit(byte: u8) bool {
+    return byte >= b'0' and byte <= b'9';
+}
+
+/// Returns `true` for ASCII hexadecimal digits.
+pub/ fn is_hex(byte: u8) bool {
+    return (byte >= b'0' and byte <= b'9')
+        or (byte >= b'a' and byte <= b'f')
+        or (byte >= b'A' and byte <= b'F');
+}
+
+/// Converts one already-validated hexadecimal byte to its numeric value.
+pub/ fn hex_value(byte: u8) u32 {
+    if (byte >= b'0' and byte <= b'9') return (byte - b'0') as u32;
+    if (byte >= b'a' and byte <= b'f') return (byte - b'a') as u32 + u32.{10};
+    return (byte - b'A') as u32 + u32.{10};
+}
+
+/// Skips JSON whitespace from `start`.
+pub/ fn skip_ws(text: &[u8], start: usize) usize {
+    let mut i = start;
+    // Whitespace skipping is a sentinel scan over bytes, not a whole-slice visit.
+    while (i < #text and is_ws(text.[i])) {
+        i += 1;
+    }
+    return i;
+}
+
+/// Compares two byte slices exactly.
+pub/ fn bytes_eq(lhs: &[u8], rhs: &[u8]) bool {
+    if (#lhs != #rhs) return false;
+    let mut i = usize.{0};
+    // Stop on the first mismatch so literal/key checks stay cheap.
+    while (i < #lhs) {
+        if (lhs.[i] != rhs.[i]) return false;
+        i += 1;
+    }
+    return true;
+}
+
+fn literal_end(
+    text: &[u8],
+    start: usize,
+    word: &[u8],
+) usize!ParseError {
+    if (#text - start < #word) return .{ Err: .UnexpectedEof };
+    if (!bytes_eq(text.&[start .. start + #word], word)) {
+        return .{ Err: .{ UnexpectedByte: start } };
+    }
+    return .{ Ok: start + #word };
+}
+
+/// Returns the byte offset after a complete JSON string.
+pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = start + 1;
+    while (i < #text) {
+        let byte = text.[i];
+        if (byte == b'"') return .{ Ok: i + 1 };
+        if (byte < 0x20) return .{ Err: .{ InvalidEscape: i } };
+        if (byte != b'\\') {
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        match (text.[i]) {
+            b'"' => {},
+            b'\\' => {},
+            b'/' => {},
+            b'b' => {},
+            b'f' => {},
+            b'n' => {},
+            b'r' => {},
+            b't' => {},
+            b'u' => {
+                if (i + 4 >= #text) return .{ Err: .UnexpectedEof };
+                let mut j = usize.{0};
+                while (j < 4) {
+                    if (!is_hex(text.[i + 1 + j])) {
+                        return .{ Err: .{ InvalidEscape: i + 1 + j } };
+                    }
+                    j += 1;
+                }
+                i += 4;
+            },
+            _ => return .{ Err: .{ InvalidEscape: i } },
+        }
+        i += 1;
+    }
+    return .{ Err: .{ UnterminatedString: start } };
+}
+
+fn number_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = start;
+    if (text.[i] == b'-') {
+        i += 1;
+        if (i >= #text) return .{ Err: .{ InvalidNumber: start } };
+    }
+
+    if (text.[i] == b'0') {
+        i += 1;
+        if (i < #text and is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+    } else if (text.[i] >= b'1' and text.[i] <= b'9') {
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    } else {
+        return .{ Err: .{ InvalidNumber: i } };
+    }
+
+    if (i < #text and text.[i] == b'.') {
+        i += 1;
+        if (i >= #text or !is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    }
+
+    if (i < #text and (text.[i] == b'e' or text.[i] == b'E')) {
+        i += 1;
+        if (i < #text and (text.[i] == b'+' or text.[i] == b'-')) {
+            i += 1;
+        }
+        if (i >= #text or !is_digit(text.[i])) {
+            return .{ Err: .{ InvalidNumber: i } };
+        }
+        while (i < #text and is_digit(text.[i])) {
+            i += 1;
+        }
+    }
+
+    return .{ Ok: i };
+}
+
+/// Returns the byte offset after a complete JSON value.
+pub/ fn value_end(text: &[u8], start: usize) usize!ParseError {
+    if (start >= #text) return .{ Err: .UnexpectedEof };
+    return match (text.[start]) {
+        b'n' => literal_end(text, start, "null"),
+        b't' => literal_end(text, start, "true"),
+        b'f' => literal_end(text, start, "false"),
+        b'"' => string_end(text, start),
+        b'[' => array_end(text, start),
+        b'{' => object_end(text, start),
+        b'-' => number_end(text, start),
+        b'0' => number_end(text, start),
+        b'1' => number_end(text, start),
+        b'2' => number_end(text, start),
+        b'3' => number_end(text, start),
+        b'4' => number_end(text, start),
+        b'5' => number_end(text, start),
+        b'6' => number_end(text, start),
+        b'7' => number_end(text, start),
+        b'8' => number_end(text, start),
+        b'9' => number_end(text, start),
+        _ => .{ Err: .{ UnexpectedByte: start } },
+    };
+}
+
+fn array_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = skip_ws(text, start + 1);
+    if (i >= #text) return .{ Err: .UnexpectedEof };
+    if (text.[i] == b']') return .{ Ok: i + 1 };
+
+    while (true) {
+        let end = value_end(text, i).!;
+        i = skip_ws(text, end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] == b']') return .{ Ok: i + 1 };
+        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+        i = skip_ws(text, i + 1);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+    }
+    return .{ Err: .UnexpectedEof };
+}
+
+fn object_end(text: &[u8], start: usize) usize!ParseError {
+    let mut i = skip_ws(text, start + 1);
+    if (i >= #text) return .{ Err: .UnexpectedEof };
+    if (text.[i] == b'}') return .{ Ok: i + 1 };
+
+    while (true) {
+        if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+        let key_end = string_end(text, i).!;
+        i = skip_ws(text, key_end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] != b':') return .{ Err: .{ MissingColon: i } };
+        i = skip_ws(text, i + 1);
+        let val_end = value_end(text, i).!;
+        i = skip_ws(text, val_end);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+        if (text.[i] == b'}') return .{ Ok: i + 1 };
+        if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+        i = skip_ws(text, i + 1);
+        if (i >= #text) return .{ Err: .UnexpectedEof };
+    }
+    return .{ Err: .UnexpectedEof };
+}
+
+fn kind_from_first(byte: u8) Kind {
+    return match (byte) {
+        b'n' => .Null,
+        b't' => .Bool,
+        b'f' => .Bool,
+        b'"' => .String,
+        b'[' => .Array,
+        b'{' => .Object,
+        _ => .Number,
+    };
+}
+
+/// Parses one value at a known non-whitespace starting offset.
+pub/ fn parse_at(text: &[u8], start: usize) Value!ParseError {
+    let end = value_end(text, start).!;
+    return .{ Ok: .{ kind: kind_from_first(text.[start]), raw: text.&[start .. end] } };
+}

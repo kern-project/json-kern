@@ -120,6 +120,49 @@ allocate an index. This is the intended default for one-pass protocol handling.
 Repeated object lookup should use an indexed view later when measurements show
 the repeated lookup cost matters.
 
+## Development
+
+The library source is split by responsibility:
+
+- `src/parser.rn` and `src/bytes.rn`: allocation-free grammar scanning.
+- `src/value.rn`: borrowed `Value`, array cursor, object cursor, and key APIs.
+- `src/decode.rn`: JSON string and key escape decoding.
+- `src/render.rn`: compact rendering into buffers and `base.io.Write`.
+- `src/document.rn`: owned compact `Document`.
+- `src/format.rn`: diagnostic formatting and exact error equality.
+
+Run the published package checks from the repository root:
+
+```sh
+craft fmt --check --verbose --color never
+craft test --color never
+craft style --verbose --color never
+```
+
+The heavier conformance runner lives in `json-test`:
+
+```sh
+cd json-test
+craft run --color never
+```
+
+It carries RFC 8259 and JSONTestSuite-shaped `y_`, `n_`, and `i_` cases. A
+mirrored external corpus such as `nst/JSONTestSuite` can be placed under
+`json-test/fixtures/JSONTestSuite` as the data-driven runner grows.
+
+The benchmark tool lives in `json-bench`:
+
+```sh
+cd json-bench
+craft run --color never -- 10000 parse
+craft run --color never -- 10000 validate
+craft run --color never -- 10000 compact
+craft run --color never -- 10000 lookup
+craft run --color never -- 10000 decode
+```
+
+Pass a JSON file path as the third argument to benchmark a larger corpus.
+
 ## License
 
 `json-kern` is distributed under the MIT License. See `LICENSE`.

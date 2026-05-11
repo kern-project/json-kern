@@ -1,0 +1,213 @@
+//! Borrowed value and cursor APIs.
+
+use base.coll.String;
+use base.mem.alloc.Allocator;
+use base.num.Parse;
+
+use ..{
+    ArrayCursor,
+    Document,
+    DocumentError,
+    KeyError,
+    Kind,
+    ObjectCursor,
+    ObjectEntry,
+    ParseError,
+    RenderError,
+    StringError,
+    Value,
+};
+use ..bytes.{bytes_eq, parse_at, skip_ws, string_end};
+use ..decode.{
+    clone_decoded_string,
+    decode_string_into,
+    decoded_string_eq,
+    decoded_string_len,
+};
+use ..document.compact_into;
+use ..render.{render_into, write_into};
+
+fn wrap_key_parse_error(err: ParseError) KeyError {
+    return .{ Parse: err };
+}
+
+fn wrap_key_string_error(err: StringError) KeyError {
+    return .{ String: err };
+}
+
+impl Value {
+    /// Returns `true` when this value is JSON null.
+    pub fn is_null() bool {
+        return self.kind == .Null;
+    }
+
+    /// Returns the boolean value, or `None` when this is not a boolean.
+    pub fn bool_value() ?bool {
+        if (self.kind != .Bool) return .None;
+        return .{ Some: bytes_eq(self.raw, "true") };
+    }
+
+    /// Returns raw number text, or `None` when this is not a number.
+    pub fn number_text() ?&[u8] {
+        if (self.kind != .Number) return .None;
+        return .{ Some: self.raw };
+    }
+
+    /// Parses an integer number as `i64`.
+    ///
+    /// Fractional and exponent forms are rejected by the integer parser.
+    pub fn i64_value() ?i64 {
+        if (self.kind != .Number) return .None;
+        let .{ Ok: value } = self.raw.parse[i64]() else return .None;
+        return .{ Some: value };
+    }
+
+    /// Returns raw string contents without the surrounding quotes.
+    pub fn string_raw() ?&[u8] {
+        if (self.kind != .String) return .None;
+        return .{ Some: self.raw.&[1 .. #self.raw - 1] };
+    }
+
+    /// Returns the byte length of this string after JSON escape decoding.
+    ///
+    /// Unicode escapes are decoded as UTF-8. Surrogate pairs are combined, and
+    /// unpaired surrogates return `StringError.InvalidUnicode`.
+    pub fn string_decoded_len() usize!StringError {
+        let .{ Some: raw } = self.string_raw() else return .{ Err: .NotString };
+        return decoded_string_len(raw);
+    }
+
+    /// Writes this string after JSON escape decoding into `out`.
+    ///
+    /// The return value is the number of UTF-8 bytes written.
+    pub fn write_string(out: &mut [u8]) usize!StringError {
+        let .{ Some: raw } = self.string_raw() else return .{ Err: .NotString };
+        return decode_string_into(raw, out);
+    }
+
+    /// Clones this string after JSON escape decoding.
+    ///
+    /// The returned `String` owns decoded UTF-8 bytes and must be released with
+    /// `deinit(alloc)`.
+    pub fn clone_string(alloc: &mut Allocator) String!StringError {
+        let .{ Some: raw } = self.string_raw() else return .{ Err: .NotString };
+        return clone_decoded_string(raw, alloc);
+    }
+
+    /// Returns an array cursor, or `None` when this is not an array.
+    pub fn array() ?ArrayCursor {
+        if (self.kind != .Array) return .None;
+        return .{ Some: .{ data: self.raw.&[1 .. #self.raw - 1] } };
+    }
+
+    /// Returns an object cursor, or `None` when this is not an object.
+    pub fn object() ?ObjectCursor {
+        if (self.kind != .Object) return .None;
+        return .{ Some: .{ data: self.raw.&[1 .. #self.raw - 1] } };
+    }
+
+    /// Renders this borrowed value compactly into `out`.
+    pub fn render_compact(out: &mut [u8]) usize!RenderError {
+        return render_into(self.raw, out);
+    }
+
+    /// Writes this borrowed value compactly into `writer`.
+    pub fn write_compact(writer: &mut base.io.Write) usize!RenderError {
+        return write_into(self.raw, writer);
+    }
+
+    /// Clones this borrowed value into an owned compact document.
+    pub fn clone_document(alloc: &mut Allocator) Document!DocumentError {
+        let mut doc = Document.{};
+        compact_into(doc.storage..&, alloc, self.raw).!;
+        return .{ Ok: doc };
+    }
+}
+
+impl &mut ArrayCursor {
+    /// Returns the next array value.
+    pub fn next() ?Value!ParseError {
+        if (self.done) return .{ Ok: .None };
+        let mut i = skip_ws(self.data, self.index);
+        if (i >= #self.data) {
+            self.done = true;
+            return .{ Ok: .None };
+        }
+        if (!self.first) {
+            if (self.data.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+            i = skip_ws(self.data, i + 1);
+        }
+
+        let value = parse_at(self.data, i).!;
+        self.index = i + #value.raw;
+        self.first = false;
+        return .{ Ok: .{ Some: value } };
+    }
+}
+
+impl &mut ObjectCursor {
+    /// Returns the next object entry.
+    pub fn next() ?ObjectEntry!ParseError {
+        if (self.done) return .{ Ok: .None };
+        let mut i = skip_ws(self.data, self.index);
+        if (i >= #self.data) {
+            self.done = true;
+            return .{ Ok: .None };
+        }
+        if (!self.first) {
+            if (self.data.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
+            i = skip_ws(self.data, i + 1);
+        }
+
+        if (i >= #self.data) return .{ Err: .UnexpectedEof };
+        if (self.data.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
+        let key_end = string_end(self.data, i).!;
+        let key_raw = self.data.&[i .. key_end];
+        let key_text = self.data.&[i + 1 .. key_end - 1];
+        i = skip_ws(self.data, key_end);
+        if (i >= #self.data) return .{ Err: .UnexpectedEof };
+        if (self.data.[i] != b':') return .{ Err: .{ MissingColon: i } };
+        i = skip_ws(self.data, i + 1);
+        let value = parse_at(self.data, i).!;
+        self.index = i + #value.raw;
+        self.first = false;
+        return .{ Ok: .{ Some: .{ key_raw: key_raw, key_text: key_text, value: value } } };
+    }
+
+    /// Returns the first entry whose decoded key matches `key`.
+    pub fn find(key: &[u8]) ?Value!KeyError {
+        while (true) {
+            let next = self.next().map_err(wrap_key_parse_error).!;
+            let .{ Some: entry } = next else return .{ Ok: .None };
+            if (entry.&.key_eq(key).map_err(wrap_key_string_error).!) {
+                return .{ Ok: .{ Some: entry.value } };
+            }
+        }
+        return .{ Ok: .None };
+    }
+}
+
+impl &ObjectEntry {
+    /// Returns the decoded UTF-8 byte length of this entry key.
+    pub fn key_decoded_len() usize!StringError {
+        return decoded_string_len(self.key_text);
+    }
+
+    /// Writes this entry key after JSON escape decoding into `out`.
+    pub fn write_key(out: &mut [u8]) usize!StringError {
+        return decode_string_into(self.key_text, out);
+    }
+
+    /// Returns whether this entry key decodes to `key`.
+    pub fn key_eq(key: &[u8]) bool!StringError {
+        return decoded_string_eq(self.key_text, key);
+    }
+
+    /// Clones this entry key after JSON escape decoding.
+    ///
+    /// The returned `String` owns decoded UTF-8 bytes and must be released with
+    /// `deinit(alloc)`.
+    pub fn clone_key(alloc: &mut Allocator) String!StringError {
+        return clone_decoded_string(self.key_text, alloc);
+    }
+}

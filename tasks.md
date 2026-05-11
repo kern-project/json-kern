@@ -6,72 +6,92 @@ incubator experiment with a redesigned public surface, not a file move.
 
 ## Priority 0: Package Shape
 
-- Create a standalone Craft package named `json` with `src/lib.rn`, focused
+- [x] Create a standalone Craft package named `json` with `src/lib.rn`, focused
   tests, README, MIT license, and no dependency on the old incubator source.
-- Start from a small public API that can grow coherently:
-  - `source.parse()` returns a borrowed `Value`.
-  - `source.validate()` checks a complete document.
-  - `value.array()`, `value.object()`, and scalar methods expose typed views.
-  - `value.clone_document(alloc)` builds an owned document when ownership is
+- [~] Start from a small public API that can grow coherently:
+  - [x] `source.parse_json()` returns a borrowed `Value`.
+  - [x] `source.validate_json()` checks a complete document.
+  - [x] `value.array()`, `value.object()`, and scalar methods expose typed views.
+  - [x] `value.clone_document(alloc)` builds an owned document when ownership is
     needed.
-  - `document.root()` and `document.root_mut()` are the owned tree action
-    surface.
-- Avoid preserving parallel low-level variants just because the incubator had
+  - [~] `document.root()` exists; `document.root_mut()` and value-level mutation
+    handles are still pending.
+- [x] Avoid preserving parallel low-level variants just because the incubator had
   them. Add packed/indexed representations only after their receiver model and
   ownership story are clearer than the default document API.
+- [x] Split `src/lib.rn` into focused modules:
+  - `bytes.rn`
+  - `parser.rn`
+  - `decode.rn`
+  - `value.rn`
+  - `document.rn`
+  - `render.rn`
+  - `format.rn`
 
 ## Priority 1: Borrowed Parser And Values
 
-- Implement allocation-free validation and complete-value parsing.
-- Preserve byte offsets for structured parse errors and diagnostic location
-  helpers.
-- Expose borrowed scalar views:
-  - `is_null`, `bool_value`, `number_text`
-  - `string_raw`, decoded string sizing/writing/cloning
-  - strict integer and float decoding
-- Expose borrowed container cursors:
+- [x] Implement allocation-free validation and complete-value parsing.
+- [x] Preserve byte offsets for structured parse errors.
+- [ ] Add diagnostic location helpers.
+- [~] Expose borrowed scalar views:
+  - [x] `is_null`, `bool_value`, `number_text`
+  - [x] `string_raw`, decoded string sizing/writing/cloning
+  - [x] strict integer decoding through `i64_value`
+  - [ ] strict float decoding
+- [x] Expose borrowed container cursors:
   - array cursor with `next()`
   - object cursor with entries that expose key and value views
-- Define duplicate-key behavior explicitly. Optional lookup may return the first
-  match, but required schema helpers should be able to reject duplicates.
+- [~] Define duplicate-key behavior explicitly. Optional lookup returns the first
+  decoded key match; duplicate rejection helpers are still pending for required
+  schema-style workflows.
 
 ## Priority 2: Owned Document
 
-- Implement an owned `Document` whose storage strategy is internal to the
-  document. Users should not manually choose per-node storage for ordinary use.
-- Provide `DocumentValue` and `DocumentValueMut` handles for traversal and
+- [~] Implement an owned `Document` whose storage strategy is internal to the
+  document. Current implementation owns compact JSON text and exposes borrowed
+  root views.
+- [ ] Provide `DocumentValue` and `DocumentValueMut` handles for traversal and
   mutation.
-- Model allocation failures with structured errors, including capacity overflow
-  where it is distinguishable.
-- Support builder-style mutation:
+- [x] Model allocation failures with structured errors, including capacity
+  overflow where it is distinguishable.
+- [ ] Support builder-style mutation:
   - object append/set/remove
   - array push/pop/remove
   - scalar replacement
-- Keep cleanup handle-oriented: `document.deinit(alloc)`.
+- [x] Keep cleanup handle-oriented: `document.deinit(alloc)`.
 
 ## Priority 3: Rendering And Writing
 
-- Provide compact rendering into `&mut [u8]` and into `base.io.Write`.
-- Add a fluent writer/builder for constructing JSON without manually counting
-  separators.
-- Keep escaping rules explicit and documented next to writer APIs.
-- Make buffer sizing and short-output failures structured.
+- [x] Provide compact rendering into `&mut [u8]` and into `base.io.Write`.
+- [ ] Add a fluent writer/builder for constructing JSON without manually
+  counting separators.
+- [~] Keep escaping rules explicit and documented next to writer APIs. String
+  decode rules are documented; construction-time escaping still belongs with the
+  pending builder.
+- [x] Make buffer sizing and short-output failures structured.
 
 ## Priority 4: Documentation And Tests
 
-- README should show borrowed parsing, owned document mutation, and rendering.
-- Module docs should teach ownership, duplicate-key policy, string decoding, and
-  numeric strictness.
-- Public items need `///` contracts for allocation, borrowing, cleanup, and
-  error boundaries.
-- Tests must cover:
-  - full JSON grammar and parse offsets
-  - borrowed object/array traversal
-  - string escape decoding
-  - integer and float errors
-  - duplicate-key behavior
-  - owned mutation and rendering
-  - README-shaped compile tests
+- [~] README shows borrowed parsing, owned document cloning/replacement, and
+  rendering. Fine-grained owned mutation is pending with the API.
+- [~] Module docs teach ownership, duplicate-key policy, string decoding, and
+  numeric strictness for the implemented modules.
+- [~] Public items need `///` contracts for allocation, borrowing, cleanup, and
+  error boundaries. Current public API is documented; run `craft style` during
+  review to keep coverage visible.
+- [~] Tests cover:
+  - [x] full JSON grammar smoke and JSONTestSuite-shaped valid/invalid cases
+  - [x] parse offsets in focused smoke tests
+  - [x] borrowed object/array traversal
+  - [x] string escape decoding
+  - [x] integer errors
+  - [ ] float errors
+  - [x] duplicate-key first-match behavior
+  - [~] owned mutation and rendering; root replacement and rendering covered,
+    fine-grained mutation pending
+  - [x] README-shaped compile tests
+- [x] Add `json-test` as an in-repository extended conformance runner.
+- [x] Add `json-bench` as an in-repository benchmark runner.
 
 ## Priority 5: Expansion Path
 
@@ -84,10 +104,10 @@ incubator experiment with a redesigned public surface, not a file move.
 
 ## Done For First Publishable Version
 
-- `craft fmt --check --verbose --color never` passes.
-- `craft test --color never` passes.
-- `craft style --verbose --color never` reports no missing public docs for the
+- [x] `craft fmt --check --verbose --color never` passes.
+- [x] `craft test --color never` passes.
+- [x] `craft style --verbose --color never` reports no missing public docs for the
   hand-written public API.
-- README examples have matching compile-only tests.
-- The old incubator implementation is deleted from `kern` or clearly no longer
+- [x] README examples have matching compile-only tests.
+- [ ] The old incubator implementation is deleted from `kern` or clearly no longer
   referenced by workspace docs/tests.
