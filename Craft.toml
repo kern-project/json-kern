@@ -1,9 +1,13 @@
 [workspace]
+name = "json-kern"
 members = [
     "json",
     "json-test",
     "json-bench",
 ]
+
+[workspace.exports]
+json = { member = "json" }
 
 [workspace.dependencies]
 json = { path = "json" }
