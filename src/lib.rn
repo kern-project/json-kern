@@ -75,6 +75,8 @@ pub enum RenderError {
     Parse: ParseError,
     /// The caller-provided output buffer is too small.
     ShortOutput,
+    /// A `base.io.Write` sink stopped accepting bytes before rendering finished.
+    WriteFailed,
 };
 
 /// Owned document failures.
@@ -214,6 +216,7 @@ impl &RenderError : Formatable {
     pub fn write_to(writer: &mut Write) void {
         match (self.*) {
             .ShortOutput => _ = writer.write("json.RenderError.ShortOutput"),
+            .WriteFailed => _ = writer.write("json.RenderError.WriteFailed"),
             .{ Parse: err } => {
                 _ = writer.write("json.RenderError.Parse(");
                 err.&.write_to(writer);
@@ -286,6 +289,7 @@ impl RenderError : Eq[RenderError] {
     pub fn eq(other: RenderError) bool {
         return match (self) {
             .ShortOutput => match (other) { .ShortOutput => true, _ => false },
+            .WriteFailed => match (other) { .WriteFailed => true, _ => false },
             .{ Parse: a } => match (other) {
                 .{ Parse: b } => a == b,
                 _ => false,
@@ -842,6 +846,44 @@ pub fn render_compact(text: &[u8], out: &mut [u8]) usize!RenderError {
     return .{ Ok: dst };
 }
 
+/// Renders valid JSON as compact JSON into `writer`.
+///
+/// The return value is the number of bytes accepted by the writer. String
+/// contents are copied exactly as written; whitespace outside strings is
+/// removed.
+pub fn write_compact(text: &[u8], writer: &mut Write) usize!RenderError {
+    validate(text).map_err([](err: ParseError) RenderError { return .{ Parse: err }; }).!;
+
+    let mut src = 0;
+    let mut written = 0;
+    let mut in_string = false;
+    let mut one = [1]u8.{undef};
+    // Rendering tracks string state and writer progress, so it is a stateful scan.
+    while (src < #text) {
+        let byte = text.[src];
+        if (!in_string and is_ws(byte)) {
+            src += 1;
+            continue;
+        }
+
+        one.[0] = byte;
+        if (writer.write(one.&[0 .. 1]) != 1) return .{ Err: .WriteFailed };
+        written += 1;
+
+        if (byte == b'"') {
+            in_string = !in_string;
+        } else if (in_string and byte == b'\\') {
+            src += 1;
+            if (src >= #text) return .{ Err: .{ Parse: .UnexpectedEof } };
+            one.[0] = text.[src];
+            if (writer.write(one.&[0 .. 1]) != 1) return .{ Err: .WriteFailed };
+            written += 1;
+        }
+        src += 1;
+    }
+    return .{ Ok: written };
+}
+
 /// Parses and owns a compact JSON document.
 pub fn parse_document(alloc: &mut Allocator, text: &[u8]) Document!DocumentError {
     let value = parse(text)
@@ -864,6 +906,11 @@ impl &[u8] {
     /// Renders this JSON document compactly into `out`.
     pub fn render_json_compact(out: &mut [u8]) usize!RenderError {
         return render_compact(self, out);
+    }
+
+    /// Writes this JSON document compactly into `writer`.
+    pub fn write_json_compact(writer: &mut Write) usize!RenderError {
+        return write_compact(self, writer);
     }
 
     /// Parses and owns this byte slice as a compact document.
@@ -959,6 +1006,11 @@ impl Value {
     /// Renders this borrowed value compactly into `out`.
     pub fn render_compact(out: &mut [u8]) usize!RenderError {
         return render_compact(self.raw, out);
+    }
+
+    /// Writes this borrowed value compactly into `writer`.
+    pub fn write_compact(writer: &mut Write) usize!RenderError {
+        return write_compact(self.raw, writer);
     }
 
     /// Clones this borrowed value into an owned compact document.

@@ -1,6 +1,8 @@
 //! Smoke tests for borrowed JSON parsing and compact rendering.
 
 use base.test;
+use base.io.Write;
+use base.coll.string;
 use base.mem.alloc.gpa;
 use json;
 use std.io;
@@ -286,6 +288,9 @@ fn check_parse_errors() void {
 
 fn check_compact_render() void {
     let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
     let mut out = [64]u8.{undef};
 
     let written = "{ \"name\" : \"kern vm\", \"ok\" : true }"
@@ -302,6 +307,23 @@ fn check_compact_render() void {
         .render_json_compact(short..&[0 .. 4])
         .should_err()
         .eq(json.RenderError.ShortOutput)
+        .sum(@loc(), t);
+
+    let mut sink = string();
+    defer sink..&.deinit(alloc);
+    let mut string_writer = sink..&.writer(alloc);
+    let writer = &mut Write.{ string_writer..& };
+    let writer_count = "{ \"items\" : [ 1, 2 ] }"
+        .write_json_compact(writer)
+        .should_ok()
+        .sum(@loc(), t);
+    writer_count
+        .should()
+        .eq(15)
+        .sum(@loc(), t);
+    sink.&.as_str()
+        .should()
+        .eq("{\"items\":[1,2]}")
         .sum(@loc(), t);
 }
 

@@ -1,6 +1,8 @@
 //! Compile-time coverage for README-shaped json flows.
 
 use json;
+use base.coll.string;
+use base.io.Write;
 use base.mem.alloc.gpa;
 use sys.mem.page;
 
@@ -39,6 +41,15 @@ fn app() void!AppError {
     let page = page()..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
+
+    let mut compact = string();
+    defer compact..&.deinit(alloc);
+    let mut string_writer = compact..&.writer(alloc);
+    let writer = &mut Write.{ string_writer..& };
+    _ = value.write_compact(writer)
+        .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
+        .!;
+
     let doc0 = value.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
             return .{ Render: .{ Parse: .EmptyInput } };

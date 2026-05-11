@@ -24,6 +24,8 @@ json = { path = "../json-kern" }
 
 ```kern
 use json;
+use base.coll.string;
+use base.io.Write;
 use base.mem.alloc.gpa;
 use sys.mem.page;
 
@@ -64,6 +66,15 @@ fn app() void!AppError {
     let page = page()..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
+
+    let mut compact = string();
+    defer compact..&.deinit(alloc);
+    let mut string_writer = compact..&.writer(alloc);
+    let writer = &mut Write.{ string_writer..& };
+    _ = root.write_compact(writer)
+        .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
+        .!;
+
     let doc = root.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
             return .{ Render: .{ Parse: .EmptyInput } };
@@ -89,6 +100,8 @@ fn app() void!AppError {
   preserved by cursor iteration.
 - `value.render_compact(out)` and `source.render_json_compact(out)` write
   compact JSON into caller-owned output.
+- `value.write_compact(writer)` and `source.write_json_compact(writer)` stream
+  compact JSON into a `base.io.Write` sink.
 - `value.clone_document(alloc)` and `source.parse_json_document(alloc)` build
   an owned compact `Document`.
 - `document.root()` returns a borrowed view over the owned compact storage.
