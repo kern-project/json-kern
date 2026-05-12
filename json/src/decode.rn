@@ -5,6 +5,7 @@
 
 use base.coll.{String, bytes_eq};
 use base.mem.alloc.{AllocError, Allocator};
+use base.text.{unicode, utf8};
 
 use ..StringError;
 use ..bytes.{hex_value, is_hex};
@@ -17,6 +18,14 @@ pub/ fn wrap_string_alloc_error(err: AllocError) StringError {
     };
 }
 
+// JSON has already validated escape shape; UTF-8 errors collapse into its string domain.
+fn wrap_utf8_error(err: utf8.Utf8Error) StringError {
+    return match (err) {
+        .ShortOutput => .ShortOutput,
+        _ => .{ InvalidUnicode: 0 },
+    };
+}
+
 // Decodes exactly four JSON unicode escape hex digits from `offset`.
 fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
     if (offset + 4 > #raw) return .{ Err: .{ InvalidEscape: offset } };
@@ -25,63 +34,10 @@ fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
     while (i < 4) {
         let byte = raw.[offset + i];
         if (!is_hex(byte)) return .{ Err: .{ InvalidEscape: offset + i } };
-        value = (value << 4) | hex_value(byte);
+        value = (value << 4) + hex_value(byte);
         i += 1;
     }
     return .{ Ok: value };
-}
-
-// JSON surrogate helpers keep Unicode scalar validation readable.
-fn is_high_surrogate(codepoint: u32) bool {
-    return codepoint >= u32.{0xD800} and codepoint <= u32.{0xDBFF};
-}
-
-// JSON low surrogates are only valid after a preceding high surrogate.
-fn is_low_surrogate(codepoint: u32) bool {
-    return codepoint >= u32.{0xDC00} and codepoint <= u32.{0xDFFF};
-}
-
-// Returns whether a decoded codepoint can be represented as a Unicode scalar.
-fn is_unicode_scalar(codepoint: u32) bool {
-    return codepoint <= u32.{0x10FFFF}
-        and !is_high_surrogate(codepoint)
-        and !is_low_surrogate(codepoint);
-}
-
-// Computes UTF-8 byte width for an already-validated scalar value.
-fn utf8_len(codepoint: u32) usize {
-    if (codepoint <= u32.{0x7F}) return 1;
-    if (codepoint <= u32.{0x7FF}) return 2;
-    if (codepoint <= u32.{0xFFFF}) return 3;
-    return 4;
-}
-
-// Writes one already-validated scalar value as UTF-8.
-fn write_utf8_codepoint(
-    out: &mut [u8],
-    index: usize,
-    codepoint: u32,
-) usize {
-    if (codepoint <= u32.{0x7F}) {
-        out.[index] = codepoint as u8;
-        return index + 1;
-    }
-    if (codepoint <= u32.{0x7FF}) {
-        out.[index] = (u32.{0xC0} | (codepoint >> 6)) as u8;
-        out.[index + 1] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
-        return index + 2;
-    }
-    if (codepoint <= u32.{0xFFFF}) {
-        out.[index] = (u32.{0xE0} | (codepoint >> 12)) as u8;
-        out.[index + 1] = (u32.{0x80} | ((codepoint >> 6) & u32.{0x3F})) as u8;
-        out.[index + 2] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
-        return index + 3;
-    }
-    out.[index] = (u32.{0xF0} | (codepoint >> 18)) as u8;
-    out.[index + 1] = (u32.{0x80} | ((codepoint >> 12) & u32.{0x3F})) as u8;
-    out.[index + 2] = (u32.{0x80} | ((codepoint >> 6) & u32.{0x3F})) as u8;
-    out.[index + 3] = (u32.{0x80} | (codepoint & u32.{0x3F})) as u8;
-    return index + 4;
 }
 
 // Decodes one JSON escape and leaves surrogate pairing to the caller.
@@ -117,22 +73,20 @@ pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
 
         let codepoint = decode_json_escape(raw, i).!;
         if (i + 1 < #raw and raw.[i + 1] == b'u') {
-            if (is_high_surrogate(codepoint)) {
+            if (unicode.is_high_surrogate(codepoint)) {
                 if (i + 12 > #raw or raw.[i + 6] != b'\\' or raw.[i + 7] != b'u') {
                     return .{ Err: .{ InvalidUnicode: i } };
                 }
                 let low = decode_hex4(raw, i + 8).!;
-                if (!is_low_surrogate(low)) return .{ Err: .{ InvalidUnicode: i + 6 } };
-                let scalar = u32.{0x10000}
-                    + ((codepoint - u32.{0xD800}) << 10)
-                    + (low - u32.{0xDC00});
-                len += utf8_len(scalar);
+                let .{ Some: scalar } = unicode.scalar_from_surrogates(codepoint, low)
+                    else return .{ Err: .{ InvalidUnicode: i + 6 } };
+                len += utf8.len(scalar).map_err(wrap_utf8_error).!;
                 i += 12;
                 continue;
             }
-            if (!is_unicode_scalar(codepoint)) return .{ Err: .{ InvalidUnicode: i } };
+            if (!unicode.is_scalar(codepoint)) return .{ Err: .{ InvalidUnicode: i } };
         }
-        len += utf8_len(codepoint);
+        len += utf8.len(codepoint).map_err(wrap_utf8_error).!;
         i += 2;
         if (i <= #raw and i >= 2 and raw.[i - 1] == b'u') {
             i += 4;
@@ -160,20 +114,20 @@ pub/ fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
 
         let mut codepoint = decode_json_escape(raw, i).!;
         if (i + 1 < #raw and raw.[i + 1] == b'u') {
-            if (is_high_surrogate(codepoint)) {
+            if (unicode.is_high_surrogate(codepoint)) {
                 let low = decode_hex4(raw, i + 8).!;
-                codepoint = u32.{0x10000}
-                    + ((codepoint - u32.{0xD800}) << 10)
-                    + (low - u32.{0xDC00});
-                dst = write_utf8_codepoint(out, dst, codepoint);
+                let .{ Some: scalar } = unicode.scalar_from_surrogates(codepoint, low)
+                    else return .{ Err: .{ InvalidUnicode: i + 6 } };
+                codepoint = scalar;
+                dst = utf8.write_at(codepoint, out, dst).map_err(wrap_utf8_error).!;
                 i += 12;
                 continue;
             }
-            dst = write_utf8_codepoint(out, dst, codepoint);
+            dst = utf8.write_at(codepoint, out, dst).map_err(wrap_utf8_error).!;
             i += 6;
             continue;
         }
-        dst = write_utf8_codepoint(out, dst, codepoint);
+        dst = utf8.write_at(codepoint, out, dst).map_err(wrap_utf8_error).!;
         i += 2;
     }
     return .{ Ok: dst };
@@ -206,17 +160,17 @@ pub/ fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
         let mut advance = usize.{2};
         if (i + 1 < #raw and raw.[i + 1] == b'u') {
             advance = 6;
-            if (is_high_surrogate(codepoint)) {
+            if (unicode.is_high_surrogate(codepoint)) {
                 let low = decode_hex4(raw, i + 8).!;
-                codepoint = u32.{0x10000}
-                    + ((codepoint - u32.{0xD800}) << 10)
-                    + (low - u32.{0xDC00});
+                let .{ Some: scalar } = unicode.scalar_from_surrogates(codepoint, low)
+                    else return .{ Err: .{ InvalidUnicode: i + 6 } };
+                codepoint = scalar;
                 advance = 12;
             }
         }
 
         let mut buf = [4]u8.{undef};
-        let written = write_utf8_codepoint(buf..&[0 .. 4], 0, codepoint);
+        let written = utf8.write(codepoint, buf..&[0 .. 4]).map_err(wrap_utf8_error).!;
         if (!bytes_eq(buf.&[0 .. written], expected.&[cursor .. cursor + written])) {
             return .{ Ok: false };
         }

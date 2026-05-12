@@ -6,6 +6,7 @@
 use ..{Kind, ParseError, Value};
 use base.coll.{List, bytes_eq};
 use base.mem.alloc.{AllocError, Allocator};
+use base.text.ascii;
 
 enum Frame {
     ArrayValueOrEnd,
@@ -35,21 +36,18 @@ pub/ fn is_ws(byte: u8) bool {
 /// JSON grammar only permits decimal digits in numbers and hex digits in
 /// `\uXXXX` string escapes.
 pub/ fn is_digit(byte: u8) bool {
-    return byte >= b'0' and byte <= b'9';
+    return ascii.is_digit(byte);
 }
 
 /// Returns `true` for ASCII hexadecimal digits.
 pub/ fn is_hex(byte: u8) bool {
-    return (byte >= b'0' and byte <= b'9')
-        or (byte >= b'a' and byte <= b'f')
-        or (byte >= b'A' and byte <= b'F');
+    return ascii.is_hex_digit(byte);
 }
 
 /// Converts one already-validated hexadecimal byte to its numeric value.
 pub/ fn hex_value(byte: u8) u32 {
-    if (byte >= b'0' and byte <= b'9') return (byte - b'0') as u32;
-    if (byte >= b'a' and byte <= b'f') return (byte - b'a') as u32 + u32.{10};
-    return (byte - b'A') as u32 + u32.{10};
+    let .{ Some: value } = ascii.hex_value(byte) else return 0;
+    return value as u32;
 }
 
 /// Skips JSON whitespace from `start`.
