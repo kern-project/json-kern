@@ -4,7 +4,7 @@
 //! source offsets for parser diagnostics.
 
 use ..{Kind, ParseError, Value};
-use base.coll.List;
+use base.coll.{List, bytes_eq};
 use base.mem.alloc.{AllocError, Allocator};
 
 enum Frame {
@@ -60,18 +60,6 @@ pub/ fn skip_ws(text: &[u8], start: usize) usize {
         i += 1;
     }
     return i;
-}
-
-/// Compares two byte slices exactly.
-pub/ fn bytes_eq(lhs: &[u8], rhs: &[u8]) bool {
-    if (#lhs != #rhs) return false;
-    let mut i = usize.{0};
-    // Stop on the first mismatch so literal/key checks stay cheap.
-    while (i < #lhs) {
-        if (lhs.[i] != rhs.[i]) return false;
-        i += 1;
-    }
-    return true;
 }
 
 // Matches a fixed JSON literal and returns the first byte after it.

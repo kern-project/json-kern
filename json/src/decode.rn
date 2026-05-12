@@ -3,11 +3,11 @@
 //! Parsing validates escape syntax, while these helpers decode string payloads
 //! into caller-owned buffers or strings only when requested.
 
-use base.coll.String;
+use base.coll.{String, bytes_eq};
 use base.mem.alloc.{AllocError, Allocator};
 
 use ..StringError;
-use ..bytes.{bytes_eq, hex_value, is_hex};
+use ..bytes.{hex_value, is_hex};
 
 /// Preserves allocation failure shape in the public string error domain.
 pub/ fn wrap_string_alloc_error(err: AllocError) StringError {

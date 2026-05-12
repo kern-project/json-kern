@@ -18,7 +18,8 @@ use ..{
     StringError,
     Value,
 };
-use ..bytes.{bytes_eq, parse_at_with_stack, skip_ws, string_end};
+use base.coll.bytes_eq;
+use ..bytes.{parse_at_with_stack, skip_ws, string_end};
 use ..decode.{
     clone_decoded_string,
     decode_string_into,
