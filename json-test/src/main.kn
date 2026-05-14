@@ -4,7 +4,7 @@
 //! convention: `y_` inputs must parse, `n_` inputs must reject, and `i_`
 //! inputs document implementation-defined pressure cases that should not crash.
 
-use base.test;
+use base.test.{Report, report};
 use base.cmp.{Ordering, LESS, EQUAL, GREATER};
 use base.io.Write;
 use base.coll.{List, String, string};
@@ -12,7 +12,7 @@ use base.mem.alloc.gpa;
 use json;
 use std.fs;
 use std.io;
-use sys.mem.page;
+use std.mem.Page;
 
 struct Case {
     name: &[u8],
@@ -84,8 +84,8 @@ fn join_path(
 
 // Runs the mirrored JSONTestSuite `test_parsing` corpus.
 fn check_json_test_suite() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -153,8 +153,8 @@ fn check_json_test_suite() void {
 
 // Ensures valid built-in cases parse, validate, and compact back to JSON.
 fn check_valid_cases() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -167,12 +167,12 @@ fn check_valid_cases() void {
             .parse_json(alloc)
             .should_ok()
             .sum(@loc(), t);
-        let mut compact = [256]u8.{undef};
+        let mut compact: [256]u8 = undef;
         let written = value
-            .render_compact(alloc, compact..&[0 .. #compact])
+            .render_compact(alloc, compact..&[0...compact.len()])
             .should_ok()
             .sum(@loc(), t);
-        compact.&[0 .. written]
+        compact.&[0...written]
             .validate_json(alloc)
             .should_ok()
             .sum(@loc(), t);
@@ -182,8 +182,8 @@ fn check_valid_cases() void {
 
 // Ensures invalid built-in cases fail validation.
 fn check_invalid_cases() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -198,8 +198,8 @@ fn check_invalid_cases() void {
 
 // Ensures implementation-pressure cases are accepted without crashing.
 fn check_implementation_cases() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -214,8 +214,8 @@ fn check_implementation_cases() void {
 
 // Covers escape decoding and decoded object-key lookup behavior.
 fn check_strings_and_lookup() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -253,8 +253,8 @@ fn check_strings_and_lookup() void {
 
 // Covers owned document compaction and replacement round trips.
 fn check_document_roundtrip() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -290,15 +290,15 @@ fn check_document_roundtrip() void {
 
 // Covers compact streaming through `base.io.Write`.
 fn check_writer() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
     let mut out = string();
     defer out..&.deinit(alloc);
     let mut string_writer = out..&.writer(alloc);
-    let writer = &mut Write.{ string_writer..& };
+    let writer = (string_writer..& as &mut Write);
     let count = "[ true, false, null, { \"a\" : \"b\" } ]"
         .write_json_compact(alloc, writer)
         .should_ok()

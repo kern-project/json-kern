@@ -27,7 +27,7 @@ use json;
 use base.coll.string;
 use base.io.Write;
 use base.mem.alloc.gpa;
-use sys.mem.page;
+use std.mem.Page;
 
 enum AppError {
     Parse: json.ParseError,
@@ -58,30 +58,30 @@ fn app(alloc: &mut base.mem.alloc.Allocator) void!AppError {
         return .{ Err: .{ Parse: .EmptyInput } };
     }
 
-    let mut out = [32]u8.{undef};
-    _ = root.render_compact(alloc, out..&[0 .. 32])
+    let mut out: [32]u8 = undef;
+    _ = root.render_compact(alloc, out..&[0...32])
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
-        .!;
+        .?;
 
     let mut compact = string();
     defer compact..&.deinit(alloc);
     let mut string_writer = compact..&.writer(alloc);
-    let writer = &mut Write.{ string_writer..& };
+    let writer = (string_writer..& as &mut Write);
     _ = root.write_compact(alloc, writer)
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
-        .!;
+        .?;
 
     let doc = root.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
             return .{ Render: .{ Parse: .EmptyInput } };
         })
-        .!;
+        .?;
     defer doc..&.deinit(alloc);
     return .{ Ok: {} };
 }
 
 fn main() i32 {
-    let page = page()..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -136,14 +136,14 @@ matters.
 
 The library source is split by responsibility:
 
-- `json/src/parser.rn` and `json/src/bytes.rn`: allocation-free grammar
+- `json/src/parser.kn` and `json/src/bytes.kn`: allocation-free grammar
   scanning.
-- `json/src/value.rn`: borrowed `Value`, array cursor, object cursor, and key
+- `json/src/value.kn`: borrowed `Value`, array cursor, object cursor, and key
   APIs.
-- `json/src/decode.rn`: JSON string and key escape decoding.
-- `json/src/render.rn`: compact rendering into buffers and `base.io.Write`.
-- `json/src/document.rn`: owned compact `Document`.
-- `json/src/format.rn`: diagnostic formatting and exact error equality.
+- `json/src/decode.kn`: JSON string and key escape decoding.
+- `json/src/render.kn`: compact rendering into buffers and `base.io.Write`.
+- `json/src/document.kn`: owned compact `Document`.
+- `json/src/format.kn`: diagnostic formatting and exact error equality.
 
 The repository root is a Craft workspace for the published package and local
 tools:

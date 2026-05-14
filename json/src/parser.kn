@@ -9,11 +9,11 @@ pub/ fn parse_value(
     text: &[u8],
 ) Value!ParseError {
     let start = skip_ws(text, 0);
-    if (start >= #text) return .{ Err: .EmptyInput };
+    if (start >= text.len()) return .{ Err: .EmptyInput };
 
-    let value = parse_at_with_stack(alloc, text, start).!;
-    let end = skip_ws(text, start + #value.raw);
-    if (end != #text) return .{ Err: .{ TrailingData: end } };
+    let value = parse_at_with_stack(alloc, text, start).?;
+    let end = skip_ws(text, start + value.raw.len());
+    if (end != text.len()) return .{ Err: .{ TrailingData: end } };
     return .{ Ok: value };
 }
 
@@ -22,7 +22,7 @@ pub/ fn validate_value(
     alloc: &mut base.mem.alloc.Allocator,
     text: &[u8],
 ) void!ParseError {
-    _ = parse_value(alloc, text).!;
+    _ = parse_value(alloc, text).?;
     return .{ Ok: {} };
 }
 

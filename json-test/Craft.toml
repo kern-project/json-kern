@@ -5,7 +5,7 @@ description = "Extended conformance tests for json-kern"
 
 [[bin]]
 name = "json-test"
-root = "src/main.rn"
+root = "src/main.kn"
 
 [dependencies]
 json = { workspace = true }

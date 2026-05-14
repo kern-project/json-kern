@@ -19,11 +19,11 @@ fn wrap_parse_number_error(err: ParseError) NumberError {
 
 // Reuses the JSON grammar scanner to reject non-number borrowed values.
 fn validate_number_text(text: &[u8]) void!NumberError {
-    if (#text == 0) return .{ Err: .{ InvalidNumber: 0 } };
+    if (text.len() == 0) return .{ Err: .{ InvalidNumber: 0 } };
     let first = text.[0];
     if (first != b'-' and !is_digit(first)) return .{ Err: .{ InvalidNumber: 0 } };
-    let end = number_end(text, 0).map_err(wrap_parse_number_error).!;
-    if (end != #text) return .{ Err: .{ InvalidNumber: end } };
+    let end = number_end(text, 0).map_err(wrap_parse_number_error).?;
+    if (end != text.len()) return .{ Err: .{ InvalidNumber: end } };
     return .{ Ok: {} };
 }
 
@@ -35,7 +35,7 @@ fn f64_from_bits(bits: u64) f64 {
 
 // Provides a portable infinity sentinel for overflow checks.
 fn positive_infinity() f64 {
-    return f64_from_bits(u64.{0x7FF0000000000000});
+    return f64_from_bits(0x7FF0000000000000u64);
 }
 
 // Computes powers of ten by repeated squaring and reports positive overflow.
@@ -75,11 +75,11 @@ fn normalized_digits_to_f64(
         if (negative) return .{ Ok: 0.0 - 0.0 };
         return .{ Ok: 0.0 };
     }
-    let scale = power10(decimal_exp).!;
+    let scale = power10(decimal_exp).?;
     let mut value = if (decimal_exp < 0) {
         (mantissa as f64) * scale
     } else {
-        finite_or_overflow((mantissa as f64) * scale).!
+        finite_or_overflow((mantissa as f64) * scale).?
     };
     if (negative) value = 0.0 - value;
     return finite_or_overflow(value);
@@ -95,13 +95,13 @@ fn maybe_round_up(
     if (!has_dropped_digit) return mantissa;
     if (dropped_digit > 5) return mantissa + 1;
     if (dropped_digit < 5) return mantissa;
-    if (sticky or (mantissa & u64.{1}) != 0) return mantissa + 1;
+    if (sticky or (mantissa & 1u64) != 0) return mantissa + 1;
     return mantissa;
 }
 
 // Parses the optional exponent with a cap large enough to decide overflow.
 fn parse_exp(text: &[u8], start: usize) i32!NumberError {
-    if (start >= #text) return .{ Ok: 0 };
+    if (start >= text.len()) return .{ Ok: 0 };
     let mut i = start + 1;
     let mut negative = false;
     if (text.[i] == b'+' or text.[i] == b'-') {
@@ -109,8 +109,8 @@ fn parse_exp(text: &[u8], start: usize) i32!NumberError {
         i += 1;
     }
 
-    let mut exp = i32.{0};
-    for (byte: text.&[i .. #text].iter()) {
+    let mut exp = 0i32;
+    for (byte: text.&[i...text.len()].iter()) {
         if (exp < 10000) {
             exp = exp * 10 + ((byte - b'0') as i32);
         }
@@ -121,19 +121,19 @@ fn parse_exp(text: &[u8], start: usize) i32!NumberError {
 
 /// Parses already-validated JSON number text into finite `f64`.
 pub/ fn parse_f64(text: &[u8]) f64!NumberError {
-    validate_number_text(text).!;
-    let mut i = usize.{0};
+    validate_number_text(text).?;
+    let mut i = 0usize;
     let negative = text.[0] == b'-';
     if (negative) i += 1;
 
-    let mut mantissa = u64.{0};
-    let mut digits_kept = usize.{0};
-    let mut fractional_digits = i32.{0};
+    let mut mantissa = 0u64;
+    let mut digits_kept = 0usize;
+    let mut fractional_digits = 0i32;
     let mut has_dropped_digit = false;
-    let mut dropped = u8.{0};
+    let mut dropped = 0u8;
     let mut sticky = false;
     // Integer digits feed a bounded mantissa while tracking dropped precision.
-    while (i < #text) {
+    while (i < text.len()) {
         let byte = text.[i];
         if (byte == b'.' or byte == b'e' or byte == b'E') break;
         if (digits_kept < 19) {
@@ -148,10 +148,10 @@ pub/ fn parse_f64(text: &[u8]) f64!NumberError {
         i += 1;
     }
 
-    if (i < #text and text.[i] == b'.') {
+    if (i < text.len() and text.[i] == b'.') {
         i += 1;
         // Fractional digits share the same bounded mantissa and extend scale.
-        while (i < #text and is_digit(text.[i])) {
+        while (i < text.len() and is_digit(text.[i])) {
             if (digits_kept < 19) {
                 mantissa = mantissa * 10 + ((text.[i] - b'0') as u64);
                 digits_kept += 1;
@@ -170,7 +170,7 @@ pub/ fn parse_f64(text: &[u8]) f64!NumberError {
     }
 
     let exp_start = i;
-    let explicit_exp = parse_exp(text, exp_start).!;
+    let explicit_exp = parse_exp(text, exp_start).?;
     mantissa = maybe_round_up(
         mantissa,
         has_dropped_digit,

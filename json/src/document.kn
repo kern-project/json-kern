@@ -28,15 +28,15 @@ pub/ fn compact_into(
 ) void!DocumentError {
     validate_value(alloc, text).map_err([](err: ParseError) DocumentError {
         return .{ Parse: err };
-    }).!;
+    }).?;
 
     storage.clear();
-    let out = storage.try_append_uninit(alloc, #text)
+    let out = storage.try_append_uninit(alloc, text.len())
         .map_err(wrap_alloc_error)
-        .!;
+        .?;
     let written = render_into(alloc, text, out)
         .map_err([](err: RenderError) DocumentError { return .{ Render: err }; })
-        .!;
+        .?;
     storage.truncate(written);
     return .{ Ok: {} };
 }
@@ -45,7 +45,7 @@ pub/ fn compact_into(
 pub/ fn parse_document_impl(alloc: &mut Allocator, text: &[u8]) Document!DocumentError {
     let value = parse_value(alloc, text)
         .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
-        .!;
+        .?;
     return value.clone_document(alloc);
 }
 

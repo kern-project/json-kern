@@ -5,7 +5,7 @@ description = "Micro-benchmarks for json-kern"
 
 [[bin]]
 name = "json-bench"
-root = "src/main.rn"
+root = "src/main.kn"
 
 [dependencies]
 json = { workspace = true }

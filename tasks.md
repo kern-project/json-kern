@@ -6,7 +6,7 @@ incubator experiment with a redesigned public surface, not a file move.
 
 ## Priority 0: Package Shape
 
-- [x] Create a standalone Craft package named `json` with `json/src/lib.rn`,
+- [x] Create a standalone Craft package named `json` with `json/src/lib.kn`,
   focused tests, README, MIT license, and no dependency on the old incubator
   source.
 - [x] Promote the repository root to a Craft workspace that manages `json`,
@@ -22,14 +22,14 @@ incubator experiment with a redesigned public surface, not a file move.
 - [x] Avoid preserving parallel low-level variants just because the incubator had
   them. Add packed/indexed representations only after their receiver model and
   ownership story are clearer than the default document API.
-- [x] Split `json/src/lib.rn` into focused modules:
-  - `bytes.rn`
-  - `parser.rn`
-  - `decode.rn`
-  - `value.rn`
-  - `document.rn`
-  - `render.rn`
-  - `format.rn`
+- [x] Split `json/src/lib.kn` into focused modules:
+  - `bytes.kn`
+  - `parser.kn`
+  - `decode.kn`
+  - `value.kn`
+  - `document.kn`
+  - `render.kn`
+  - `format.kn`
 
 ## Priority 1: Borrowed Parser And Values
 

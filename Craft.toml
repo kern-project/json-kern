@@ -11,7 +11,7 @@ json = { member = "json" }
 
 [workspace.package]
 version = "0.1.0"
-kern = "0.7.5"
+kern = "0.7.6"
 license = "MIT"
 authors = ["softfault <givenyoung46@gmail.com>"]
 readme = "README.md"

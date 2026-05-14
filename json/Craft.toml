@@ -4,10 +4,10 @@ publish = true
 description = "JSON parsing and document utilities for Kern"
 
 [lib]
-root = "src/lib.rn"
+root = "src/lib.kn"
 
 [test]
 roots = [
-    "tests/smoke.rn",
-    "tests/api_compile.rn",
+    "tests/smoke.kn",
+    "tests/api_compile.kn",
 ]

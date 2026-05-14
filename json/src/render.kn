@@ -18,19 +18,19 @@ pub/ fn render_into(
 ) usize!RenderError {
     validate_value(alloc, text).map_err([](err: ..ParseError) RenderError {
         return .{ Parse: err };
-    }).!;
+    }).?;
 
-    let mut src = usize.{0};
-    let mut dst = usize.{0};
+    let mut src = 0usize;
+    let mut dst = 0usize;
     let mut in_string = false;
     // Rendering tracks string state and output position, so it is a stateful scan.
-    while (src < #text) {
+    while (src < text.len()) {
         let byte = text.[src];
         if (!in_string and is_ws(byte)) {
             src += 1;
             continue;
         }
-        if (dst >= #out) return .{ Err: .ShortOutput };
+        if (dst >= out.len()) return .{ Err: .ShortOutput };
         out.[dst] = byte;
         dst += 1;
 
@@ -38,8 +38,8 @@ pub/ fn render_into(
             in_string = !in_string;
         } else if (in_string and byte == b'\\') {
             src += 1;
-            if (src >= #text) return .{ Err: .{ Parse: .UnexpectedEof } };
-            if (dst >= #out) return .{ Err: .ShortOutput };
+            if (src >= text.len()) return .{ Err: .{ Parse: .UnexpectedEof } };
+            if (dst >= out.len()) return .{ Err: .ShortOutput };
             out.[dst] = text.[src];
             dst += 1;
         }
@@ -56,14 +56,14 @@ pub/ fn write_into(
 ) usize!RenderError {
     validate_value(alloc, text).map_err([](err: ..ParseError) RenderError {
         return .{ Parse: err };
-    }).!;
+    }).?;
 
     let mut src = 0;
     let mut written = 0;
     let mut in_string = false;
-    let mut one = [1]u8.{undef};
+    let mut one: [1]u8 = undef;
     // Rendering tracks string state and writer progress, so it is a stateful scan.
-    while (src < #text) {
+    while (src < text.len()) {
         let byte = text.[src];
         if (!in_string and is_ws(byte)) {
             src += 1;
@@ -71,16 +71,16 @@ pub/ fn write_into(
         }
 
         one.[0] = byte;
-        if (writer.write(one.&[0 .. 1]) != 1) return .{ Err: .WriteFailed };
+        if (writer.write(one..&[0...1]) != 1) return .{ Err: .WriteFailed };
         written += 1;
 
         if (byte == b'"') {
             in_string = !in_string;
         } else if (in_string and byte == b'\\') {
             src += 1;
-            if (src >= #text) return .{ Err: .{ Parse: .UnexpectedEof } };
+            if (src >= text.len()) return .{ Err: .{ Parse: .UnexpectedEof } };
             one.[0] = text.[src];
-            if (writer.write(one.&[0 .. 1]) != 1) return .{ Err: .WriteFailed };
+            if (writer.write(one..&[0...1]) != 1) return .{ Err: .WriteFailed };
             written += 1;
         }
         src += 1;

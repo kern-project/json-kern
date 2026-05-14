@@ -15,7 +15,7 @@ manifest-digest = "fnv1a64:ee82cb7d38ea7fb9"
 package = "json-test 0.1.0 root"
 kind = "bin"
 name = "json-test"
-root = "src/main.rn"
+root = "src/main.kn"
 
 [[external-package]]
 id = "json path:.."

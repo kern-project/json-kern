@@ -1,17 +1,17 @@
 //! Smoke tests for borrowed JSON parsing and compact rendering.
 
-use base.test;
+use base.test.{Report, report};
 use base.io.Write;
 use base.coll.string;
 use base.mem.alloc.gpa;
 use json;
 use std.io;
-use sys.mem.page;
+use std.mem.Page;
 
 // Covers scalar views, number conversion, and string decoding behavior.
 fn check_scalars() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -56,7 +56,7 @@ fn check_scalars() void {
         .should_some()
         .sum(@loc(), t)
         .should()
-        .eq(i64.{-12345})
+        .eq((0i64 - 12345i64))
         .sum(@loc(), t);
     number
         .f64_value()
@@ -120,12 +120,12 @@ fn check_scalars() void {
         .should_ok()
         .eq(5)
         .sum(@loc(), t);
-    let mut decoded_buf = [16]u8.{undef};
+    let mut decoded_buf: [16]u8 = undef;
     let decoded_len = string
-        .write_string(decoded_buf..&[0 .. 16])
+        .write_string(decoded_buf..&[0...16])
         .should_ok()
         .sum(@loc(), t);
-    decoded_buf.&[0 .. decoded_len]
+    decoded_buf.&[0...decoded_len]
         .should()
         .eq("kern\n")
         .sum(@loc(), t);
@@ -144,9 +144,9 @@ fn check_scalars() void {
         .eq([4]u8.{ 0xF0, 0x9F, 0x9A, 0x80 })
         .sum(@loc(), t);
 
-    let mut short = [3]u8.{undef};
+    let mut short: [3]u8 = undef;
     emoji
-        .write_string(short..&[0 .. 3])
+        .write_string(short..&[0...3])
         .should_err()
         .eq(json.StringError.ShortOutput)
         .sum(@loc(), t);
@@ -163,8 +163,8 @@ fn check_scalars() void {
 
 // Covers borrowed array cursor iteration without building an owned tree.
 fn check_array_cursor() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -185,7 +185,7 @@ fn check_array_cursor() void {
         .should_some()
         .sum(@loc(), t)
         .should()
-        .eq(i64.{1})
+        .eq(1i64)
         .sum(@loc(), t);
     let second = cursor
         .next(alloc)
@@ -219,8 +219,8 @@ fn check_array_cursor() void {
 
 // Covers object cursor order, duplicate-key lookup, and decoded key matching.
 fn check_object_cursor_and_lookup() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
     let value = "{\"name\":\"kern\",\"version\":7,\"name\":\"second\"}"
@@ -304,8 +304,8 @@ fn check_object_cursor_and_lookup() void {
 
 // Covers representative parser diagnostics and deeply nested stack parsing.
 fn check_parse_errors() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
 
@@ -371,7 +371,7 @@ fn check_parse_errors() void {
         .eq(7)
         .sum(@loc(), t);
 
-    let mut nested = [1025]u8.{undef};
+    let mut nested: [1025]u8 = undef;
     let mut i = 0;
     while (i < 512) {
         nested.[i] = b'[';
@@ -382,7 +382,7 @@ fn check_parse_errors() void {
         i -= 1;
         nested.[1024 - i] = b']';
     }
-    nested.&[0 .. #nested]
+    nested..&[0...nested.len()]
         .validate_json(alloc)
         .should_ok()
         .sum(@loc(), t);
@@ -390,24 +390,24 @@ fn check_parse_errors() void {
 
 // Covers compact rendering into both fixed buffers and `base.io.Write`.
 fn check_compact_render() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     defer alloc.deinit();
-    let mut out = [64]u8.{undef};
+    let mut out: [64]u8 = undef;
 
     let written = "{ \"name\" : \"kern vm\", \"ok\" : true }"
-        .render_json_compact(alloc, out..&[0 .. 64])
+        .render_json_compact(alloc, out..&[0...64])
         .should_ok()
         .sum(@loc(), t);
-    out.&[0 .. written]
+    out.&[0...written]
         .should()
         .eq("{\"name\":\"kern vm\",\"ok\":true}")
         .sum(@loc(), t);
 
     let mut short = [4]u8.{0, 0, 0, 0};
     "[1,2,3]"
-        .render_json_compact(alloc, short..&[0 .. 4])
+        .render_json_compact(alloc, short..&[0...4])
         .should_err()
         .eq(json.RenderError.ShortOutput)
         .sum(@loc(), t);
@@ -415,7 +415,7 @@ fn check_compact_render() void {
     let mut sink = string();
     defer sink..&.deinit(alloc);
     let mut string_writer = sink..&.writer(alloc);
-    let writer = &mut Write.{ string_writer..& };
+    let writer = (string_writer..& as &mut Write);
     let writer_count = "{ \"items\" : [ 1, 2 ] }"
         .write_json_compact(alloc, writer)
         .should_ok()
@@ -432,8 +432,8 @@ fn check_compact_render() void {
 
 // Covers owned compact document creation, root views, and whole-root replace.
 fn check_owned_document() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let alloc = gpa().on(page)..&;
     let doc0 = "{ \"name\" : \"kern\", \"enabled\" : true }"
         .parse_json_document(alloc)
@@ -472,8 +472,9 @@ fn check_owned_document() void {
         .sum(@loc(), t);
 }
 
-// Runs the smoke suite as a Craft test binary.
-fn main() i32 {
+// Runs the smoke suite as a Craft test target.
+#[test]
+fn smoke() i32 {
     check_scalars();
     check_array_cursor();
     check_object_cursor_and_lookup();

@@ -42,10 +42,10 @@ impl ParseError {
     /// still display a location if the error came from a related slice.
     pub fn location_in(text: &[u8]) ?ParseLocation {
         let .{ Some: raw_offset } = self.offset() else return .None;
-        let offset = if (raw_offset > #text) #text else raw_offset;
-        let mut line = usize.{1};
-        let mut column = usize.{1};
-        let mut i = usize.{0};
+        let offset = if (raw_offset > text.len()) text.len() else raw_offset;
+        let mut line = 1usize;
+        let mut column = 1usize;
+        let mut i = 0usize;
         while (i < offset) {
             if (text.[i] == b'\n') {
                 line += 1;

@@ -15,7 +15,7 @@ manifest-digest = "fnv1a64:e49b72d3cb0b5deb"
 package = "json-bench 0.1.0 root"
 kind = "bin"
 name = "json-bench"
-root = "src/main.rn"
+root = "src/main.kn"
 
 [[external-package]]
 id = "json path:.."
