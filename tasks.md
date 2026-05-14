@@ -44,9 +44,9 @@ incubator experiment with a redesigned public surface, not a file move.
 - [x] Expose borrowed container cursors:
   - array cursor with `next()`
   - object cursor with entries that expose key and value views
-- [~] Define duplicate-key behavior explicitly. Optional lookup returns the first
-  decoded key match; duplicate rejection helpers are still pending for required
-  schema-style workflows.
+- [x] Define duplicate-key behavior explicitly. Optional lookup returns the first
+  decoded key match; `find_unique()` and `reject_duplicate_keys()` reject
+  duplicate decoded keys for required schema-style workflows.
 
 ## Priority 2: Owned Document
 
@@ -77,7 +77,7 @@ incubator experiment with a redesigned public surface, not a file move.
 
 - [~] README shows borrowed parsing, owned document cloning/replacement, and
   rendering. Fine-grained owned mutation is pending with the API.
-- [~] Module docs teach ownership, duplicate-key policy, string decoding, and
+- [x] Module docs teach ownership, duplicate-key policy, string decoding, and
   numeric strictness for the implemented modules.
 - [~] Public items need `///` contracts for allocation, borrowing, cleanup, and
   error boundaries. Current public API is documented; run `craft style` during
@@ -89,7 +89,7 @@ incubator experiment with a redesigned public surface, not a file move.
   - [x] string escape decoding
   - [x] integer errors
   - [x] float errors
-  - [x] duplicate-key first-match behavior
+  - [x] duplicate-key first-match and duplicate rejection behavior
   - [~] owned mutation and rendering; root replacement and rendering covered,
     fine-grained mutation pending
   - [x] README-shaped compile tests

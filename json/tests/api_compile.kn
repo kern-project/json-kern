@@ -37,6 +37,14 @@ fn app() void!AppError {
     if (!enabled_flag) {
         return .{ Err: .{ Parse: .EmptyInput } };
     }
+    let .{ Some: mut strict_object } = value.object() else {
+        return .{ Err: .{ Parse: .EmptyInput } };
+    };
+    let strict_lookup = strict_object..&;
+    _ = strict_lookup
+        .find_unique(alloc, "name")
+        .map_err([](err: json.KeyError) AppError { return .{ Key: err }; })
+        .?;
 
     let mut out: [32]u8 = undef;
     _ = value.render_compact(alloc, out..&[0...32])

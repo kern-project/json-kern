@@ -40,6 +40,26 @@ fn wrap_key_string_error(err: StringError) KeyError {
     return .{ String: err };
 }
 
+// Compares two raw JSON key bodies by decoded UTF-8 bytes.
+fn decoded_key_eq(
+    alloc: &mut Allocator,
+    lhs: &[u8],
+    rhs: &[u8],
+) bool!StringError {
+    let len = decoded_string_len(lhs).?;
+    if (len != decoded_string_len(rhs).?) return .{ Ok: false };
+
+    let mut scratch: [256]u8 = undef;
+    if (len <= scratch.@len()) {
+        let written = decode_string_into(rhs, scratch..&[0...len]).?;
+        return decoded_string_eq(lhs, scratch.&[0...written]);
+    }
+
+    let mut text = clone_decoded_string(rhs, alloc).?;
+    defer text..&.deinit(alloc);
+    return decoded_string_eq(lhs, text.&.as_str());
+}
+
 impl Value {
     /// Returns `true` when this value is JSON null.
     pub fn is_null() bool {
@@ -227,6 +247,58 @@ impl &mut ObjectCursor {
             }
         }
         return .{ Ok: .None };
+    }
+
+    /// Returns a value only when exactly one decoded key matches `key`.
+    ///
+    /// Duplicate matches are reported as `KeyError.DuplicateKey`, making this
+    /// helper suitable for schema-style object reads where ambiguity is not
+    /// acceptable.
+    pub fn find_unique(alloc: &mut Allocator, key: &[u8]) ?Value!KeyError {
+        let mut found: ?Value = .None;
+        while (true) {
+            let next = self.next(alloc).map_err(wrap_key_parse_error).?;
+            let .{ Some: entry } = next else return .{ Ok: found };
+            if (entry.&.key_eq(key).map_err(wrap_key_string_error).?) {
+                match (found) {
+                    .{ Some: _ } => return .{ Err: .DuplicateKey },
+                    .None => found = .{ Some: entry.value },
+                }
+            }
+        }
+        return .{ Ok: found };
+    }
+
+    /// Rejects this object when any two entries decode to the same key.
+    ///
+    /// Escaped-equivalent keys such as `"name"` and `"na\u006de"` are treated
+    /// as duplicates. Small keys compare through stack storage; unusually large
+    /// keys may allocate temporary decoded storage through `alloc`.
+    pub fn reject_duplicate_keys(alloc: &mut Allocator) void!KeyError {
+        while (true) {
+            let next = self.next(alloc).map_err(wrap_key_parse_error).?;
+            let .{ Some: entry } = next else return .{ Ok: {} };
+
+            let mut rest = ObjectCursor.{
+                data: self.data,
+                index: self.index,
+                first: false,
+                done: false,
+            };
+            while (true) {
+                let candidate = rest
+                    ..&.next(alloc)
+                    .map_err(wrap_key_parse_error)
+                    .?;
+                let .{ Some: other } = candidate else break;
+                if (decoded_key_eq(alloc, entry.key_text, other.key_text)
+                    .map_err(wrap_key_string_error).?)
+                {
+                    return .{ Err: .DuplicateKey };
+                }
+            }
+        }
+        return .{ Ok: {} };
     }
 }
 

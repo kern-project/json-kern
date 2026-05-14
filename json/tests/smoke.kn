@@ -262,6 +262,32 @@ fn check_object_cursor_and_lookup() void {
         .eq("kern")
         .sum(@loc(), t);
 
+    let unique_lookup = value.object().should_some().sum(@loc(), t)..&;
+    unique_lookup
+        .find_unique(alloc, "version")
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t)
+        .i64_value()
+        .should_some()
+        .sum(@loc(), t)
+        .should()
+        .eq(7i64)
+        .sum(@loc(), t);
+    let duplicate_lookup = value.object().should_some().sum(@loc(), t)..&;
+    duplicate_lookup
+        .find_unique(alloc, "name")
+        .should_err()
+        .eq(json.KeyError.DuplicateKey)
+        .sum(@loc(), t);
+    let duplicate_check = value.object().should_some().sum(@loc(), t)..&;
+    duplicate_check
+        .reject_duplicate_keys(alloc)
+        .should_err()
+        .eq(json.KeyError.DuplicateKey)
+        .sum(@loc(), t);
+
     let escaped = "{\"na\\u006de\":\"decoded\",\"raw\":\"plain\"}"
         .parse_json(alloc)
         .should_ok()
@@ -299,6 +325,17 @@ fn check_object_cursor_and_lookup() void {
         .sum(@loc(), t)
         .should()
         .eq("decoded")
+        .sum(@loc(), t);
+
+    let escaped_duplicate = "{\"name\":1,\"na\\u006de\":2}"
+        .parse_json(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+    let escaped_duplicate_check = escaped_duplicate.object().should_some().sum(@loc(), t)..&;
+    escaped_duplicate_check
+        .reject_duplicate_keys(alloc)
+        .should_err()
+        .eq(json.KeyError.DuplicateKey)
         .sum(@loc(), t);
 }
 

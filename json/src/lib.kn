@@ -94,6 +94,8 @@ pub enum KeyError {
     Parse: ParseError,
     /// Object key decoding failed while comparing a JSON key.
     String: StringError,
+    /// More than one decoded object key matched a strict key query.
+    DuplicateKey,
 };
 
 /// JSON number decoding failures.
@@ -172,8 +174,8 @@ pub struct ObjectEntry {
 
 /// Borrowed object cursor.
 ///
-/// Duplicate keys are preserved by iteration. Lookup helpers return the first
-/// matching raw key.
+/// Duplicate keys are preserved by iteration. `find()` returns the first
+/// matching decoded key, while strict helpers can reject duplicates explicitly.
 pub struct ObjectCursor {
     pub/ data: &[u8],
     pub/ index: usize = 0,

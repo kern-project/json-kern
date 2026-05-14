@@ -109,6 +109,8 @@ fn main() i32 {
 - `entry.write_key(out)` and `entry.clone_key(alloc)` decode object keys.
 - `object.find(alloc, key)` returns the first decoded key match. Duplicate keys are
   preserved by cursor iteration.
+- `object.find_unique(alloc, key)` and `object.reject_duplicate_keys(alloc)` reject
+  duplicate decoded keys with `json.KeyError.DuplicateKey` for schema-style reads.
 - `value.render_compact(alloc, out)` and `source.render_json_compact(alloc, out)` write
   compact JSON into caller-owned output.
 - `value.write_compact(alloc, writer)` and `source.write_json_compact(alloc, writer)` stream

@@ -148,6 +148,7 @@ impl &KeyError : Formatable {
                 err.&.write_to(writer);
                 _ = writer.write(")");
             },
+            .DuplicateKey => _ = writer.write("json.KeyError.DuplicateKey"),
         }
     }
 }
@@ -287,6 +288,7 @@ impl KeyError : Eq[KeyError] {
                 .{ String: b } => a == b,
                 _ => false,
             },
+            .DuplicateKey => match (other) { .DuplicateKey => true, _ => false },
         };
     }
 }
