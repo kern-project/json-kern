@@ -19,7 +19,6 @@ use ..{
 };
 use ..parser.{parse_value, validate_value};
 use ..render.render_into;
-use ..builder.write_escaped_string;
 
 struct EntryRange {
     start: usize,
@@ -83,7 +82,7 @@ fn build_string_fragment(
 ) void!DocumentError {
     let mut writer = out.writer(alloc);
     let sink = (writer..& as &mut Write);
-    write_escaped_string(sink, text).map_err(wrap_write_error).?;
+    ..write_escaped_string(sink, text).map_err(wrap_write_error).?;
     return .{ Ok: {} };
 }
 

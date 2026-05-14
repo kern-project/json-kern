@@ -11,14 +11,14 @@ incubator experiment with a redesigned public surface, not a file move.
   source.
 - [x] Promote the repository root to a Craft workspace that manages `json`,
   `json-test`, and `json-bench` together.
-- [~] Start from a small public API that can grow coherently:
+- [x] Start from a small public API that can grow coherently:
   - [x] `source.parse_json()` returns a borrowed `Value`.
   - [x] `source.validate_json()` checks a complete document.
   - [x] `value.array()`, `value.object()`, and scalar methods expose typed views.
   - [x] `value.clone_document(alloc)` builds an owned document when ownership is
     needed.
-  - [~] `document.root()` exists; `document.root_mut()` and value-level mutation
-    handles are still pending.
+  - [x] `document.root()`, `document.root_mut()`, and value-level mutation
+    handles exist.
 - [x] Avoid preserving parallel low-level variants just because the incubator had
   them. Add packed/indexed representations only after their receiver model and
   ownership story are clearer than the default document API.
@@ -37,7 +37,7 @@ incubator experiment with a redesigned public surface, not a file move.
 - [x] Implement allocation-free validation and complete-value parsing.
 - [x] Preserve byte offsets for structured parse errors.
 - [x] Add diagnostic location helpers.
-- [~] Expose borrowed scalar views:
+- [x] Expose borrowed scalar views:
   - [x] `is_null`, `bool_value`, `number_text`
   - [x] `string_raw`, decoded string sizing/writing/cloning
   - [x] strict integer decoding through `i64_value`
@@ -51,7 +51,7 @@ incubator experiment with a redesigned public surface, not a file move.
 
 ## Priority 2: Owned Document
 
-- [~] Implement an owned `Document` whose storage strategy is internal to the
+- [x] Implement an owned `Document` whose storage strategy is internal to the
   document. Current implementation owns compact JSON text and exposes borrowed
   root views.
 - [x] Provide `DocumentValue` and `DocumentValueMut` handles for traversal and
@@ -78,10 +78,10 @@ incubator experiment with a redesigned public surface, not a file move.
   rendering/writing, and compact-text mutation.
 - [x] Module docs teach ownership, duplicate-key policy, string decoding, and
   numeric strictness for the implemented modules.
-- [~] Public items need `///` contracts for allocation, borrowing, cleanup, and
+- [x] Public items need `///` contracts for allocation, borrowing, cleanup, and
   error boundaries. Current public API is documented; run `craft style` during
   review to keep coverage visible.
-- [~] Tests cover:
+- [x] Tests cover:
   - [x] full JSON grammar smoke and JSONTestSuite-shaped valid/invalid cases
   - [x] parse offsets in focused smoke tests
   - [x] borrowed object/array traversal
@@ -112,5 +112,5 @@ incubator experiment with a redesigned public surface, not a file move.
 - [x] `craft style --verbose --color never` reports no missing public docs for the
   hand-written public API.
 - [x] README examples have matching compile-only tests.
-- [ ] The old incubator implementation is deleted from `kern` or clearly no longer
+- [x] The old incubator implementation is deleted from `kern` or clearly no longer
   referenced by workspace docs/tests.

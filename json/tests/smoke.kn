@@ -694,8 +694,8 @@ fn check_owned_document() void {
         .sum(@loc(), t);
 }
 
-// Runs the smoke suite as a Craft test target.
 #[test]
+// Aggregates focused parser, writer, and document checks for Craft test.
 fn smoke() i32 {
     check_scalars();
     check_array_cursor();

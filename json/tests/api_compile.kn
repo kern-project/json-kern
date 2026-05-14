@@ -99,8 +99,8 @@ fn app() void!AppError {
     return .{ Ok: {} };
 }
 
-// Compile-only API coverage test.
 #[test]
+// Exercises the public API surface in one compile-only flow.
 fn api_compile() i32 {
     let .{ Ok: _ } = app() else return 1;
     return 0;
