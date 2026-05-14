@@ -232,13 +232,13 @@ fn bench_compact(
     text: &[u8],
 ) bool {
     let mut out: [262144]u8 = undef;
-    if (text.len() > out.len()) return false;
+    if (text.len() > out.@len()) return false;
     let mut sink = 0usize;
     let start = time.monotonic().now();
     for (_: 0usize...iterations) {
         let .{ Ok: written } = text.render_json_compact(
             alloc,
-            out..&[0...out.len()],
+            out..&[0...out.@len()],
         )else return false;
         sink += written;
     }
@@ -289,11 +289,11 @@ fn bench_decode(
     let .{ Ok: value } = DECODE_SAMPLE.parse_json(alloc) else return false;
     let .{ Ok: needed } = value.string_decoded_len() else return false;
     let mut out: [64]u8 = undef;
-    if (needed > out.len()) return false;
+    if (needed > out.@len()) return false;
     let mut sink = 0usize;
     let start = time.monotonic().now();
     for (_: 0usize...iterations) {
-        let .{ Ok: written } = value.write_string(out..&[0...out.len()]) else return false;
+        let .{ Ok: written } = value.write_string(out..&[0...out.@len()]) else return false;
         sink += written;
     }
     print_stats(
