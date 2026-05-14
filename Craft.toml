@@ -15,7 +15,7 @@ kern = "0.7.6"
 license = "MIT"
 authors = ["softfault <givenyoung46@gmail.com>"]
 readme = "README.md"
-repository = "https://github.com/softfault/json-kern.git"
+repository = "https://github.com/kern-project/json-kern.git"
 
 [workspace.dependencies]
 json = { path = "json" }
