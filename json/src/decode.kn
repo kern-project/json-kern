@@ -28,7 +28,7 @@ fn wrap_utf8_error(err: utf8.Utf8Error) StringError {
 
 // Decodes exactly four JSON unicode escape hex digits from `offset`.
 fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
-    if (offset + 4 > raw.len()) return .{ Err: .{ InvalidEscape: offset } };
+    if (offset + 4 > raw.@len()) return .{ Err: .{ InvalidEscape: offset } };
     let mut value = 0u32;
     let mut i = 0;
     while (i < 4) {
@@ -42,7 +42,7 @@ fn decode_hex4(raw: &[u8], offset: usize) u32!StringError {
 
 // Decodes one JSON escape and leaves surrogate pairing to the caller.
 fn decode_json_escape(raw: &[u8], slash: usize) u32!StringError {
-    if (slash + 1 >= raw.len()) return .{ Err: .{ InvalidEscape: slash } };
+    if (slash + 1 >= raw.@len()) return .{ Err: .{ InvalidEscape: slash } };
     return match (raw.[slash + 1]) {
         b'"' => .{ Ok: b'"' as u32 },
         b'\\' => .{ Ok: b'\\' as u32 },
@@ -62,7 +62,7 @@ pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
     let mut i = 0;
     let mut len = 0;
     // Escape decoding advances by variable widths, including surrogate pairs.
-    while (i < raw.len()) {
+    while (i < raw.@len()) {
         let byte = raw.[i];
         if (byte != b'\\') {
             if (byte < 0x20) return .{ Err: .{ InvalidEscape: i } };
@@ -72,9 +72,9 @@ pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
         }
 
         let codepoint = decode_json_escape(raw, i).?;
-        if (i + 1 < raw.len() and raw.[i + 1] == b'u') {
+        if (i + 1 < raw.@len() and raw.[i + 1] == b'u') {
             if (unicode.is_high_surrogate(codepoint)) {
-                if (i + 12 > raw.len() or raw.[i + 6] != b'\\' or raw.[i + 7] != b'u') {
+                if (i + 12 > raw.@len() or raw.[i + 6] != b'\\' or raw.[i + 7] != b'u') {
                     return .{ Err: .{ InvalidUnicode: i } };
                 }
                 let low = decode_hex4(raw, i + 8).?;
@@ -88,7 +88,7 @@ pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
         }
         len += utf8.len(codepoint).map_err(wrap_utf8_error).?;
         i += 2;
-        if (i <= raw.len() and i >= 2 and raw.[i - 1] == b'u') {
+        if (i <= raw.@len() and i >= 2 and raw.[i - 1] == b'u') {
             i += 4;
         }
     }
@@ -98,12 +98,12 @@ pub/ fn decoded_string_len(raw: &[u8]) usize!StringError {
 /// Decodes a raw JSON string body into caller-provided storage.
 pub/ fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
     let needed = decoded_string_len(raw).?;
-    if (needed > out.len()) return .{ Err: .ShortOutput };
+    if (needed > out.@len()) return .{ Err: .ShortOutput };
 
     let mut i = 0;
     let mut dst = 0;
     // The source cursor follows escape width while the destination cursor follows UTF-8 width.
-    while (i < raw.len()) {
+    while (i < raw.@len()) {
         let byte = raw.[i];
         if (byte != b'\\') {
             out.[dst] = byte;
@@ -113,7 +113,7 @@ pub/ fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
         }
 
         let mut codepoint = decode_json_escape(raw, i).?;
-        if (i + 1 < raw.len() and raw.[i + 1] == b'u') {
+        if (i + 1 < raw.@len() and raw.[i + 1] == b'u') {
             if (unicode.is_high_surrogate(codepoint)) {
                 let low = decode_hex4(raw, i + 8).?;
                 let .{ Some: scalar } = unicode.scalar_from_surrogates(codepoint, low)
@@ -136,10 +136,10 @@ pub/ fn decode_string_into(raw: &[u8], out: &mut [u8]) usize!StringError {
 /// Returns whether a raw JSON string body decodes exactly to `expected`.
 pub/ fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
     let needed = decoded_string_len(raw).?;
-    if (needed != expected.len()) return .{ Ok: false };
+    if (needed != expected.@len()) return .{ Ok: false };
 
     let mut scratch: [256]u8 = undef;
-    if (needed <= scratch.len()) {
+    if (needed <= scratch.@len()) {
         let written = decode_string_into(raw, scratch..&[0...needed]).?;
         return .{ Ok: bytes_eq(scratch..&[0...written], expected) };
     }
@@ -147,7 +147,7 @@ pub/ fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
     let mut i = 0;
     let mut cursor = 0;
     // Compare decoded bytes without allocating for strings larger than the scratch buffer.
-    while (i < raw.len()) {
+    while (i < raw.@len()) {
         let byte = raw.[i];
         if (byte != b'\\') {
             if (expected.[cursor] != byte) return .{ Ok: false };
@@ -158,7 +158,7 @@ pub/ fn decoded_string_eq(raw: &[u8], expected: &[u8]) bool!StringError {
 
         let mut codepoint = decode_json_escape(raw, i).?;
         let mut advance = 2usize;
-        if (i + 1 < raw.len() and raw.[i + 1] == b'u') {
+        if (i + 1 < raw.@len() and raw.[i + 1] == b'u') {
             advance = 6;
             if (unicode.is_high_surrogate(codepoint)) {
                 let low = decode_hex4(raw, i + 8).?;

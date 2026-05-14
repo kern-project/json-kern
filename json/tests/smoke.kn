@@ -419,7 +419,7 @@ fn check_parse_errors() void {
         i -= 1;
         nested.[1024 - i] = b']';
     }
-    nested..&[0...nested.len()]
+    nested..&[0...nested.@len()]
         .validate_json(alloc)
         .should_ok()
         .sum(@loc(), t);

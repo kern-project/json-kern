@@ -19,11 +19,11 @@ fn wrap_parse_number_error(err: ParseError) NumberError {
 
 // Reuses the JSON grammar scanner to reject non-number borrowed values.
 fn validate_number_text(text: &[u8]) void!NumberError {
-    if (text.len() == 0) return .{ Err: .{ InvalidNumber: 0 } };
+    if (text.@len() == 0) return .{ Err: .{ InvalidNumber: 0 } };
     let first = text.[0];
     if (first != b'-' and !is_digit(first)) return .{ Err: .{ InvalidNumber: 0 } };
     let end = number_end(text, 0).map_err(wrap_parse_number_error).?;
-    if (end != text.len()) return .{ Err: .{ InvalidNumber: end } };
+    if (end != text.@len()) return .{ Err: .{ InvalidNumber: end } };
     return .{ Ok: {} };
 }
 
@@ -101,7 +101,7 @@ fn maybe_round_up(
 
 // Parses the optional exponent with a cap large enough to decide overflow.
 fn parse_exp(text: &[u8], start: usize) i32!NumberError {
-    if (start >= text.len()) return .{ Ok: 0 };
+    if (start >= text.@len()) return .{ Ok: 0 };
     let mut i = start + 1;
     let mut negative = false;
     if (text.[i] == b'+' or text.[i] == b'-') {
@@ -110,7 +110,7 @@ fn parse_exp(text: &[u8], start: usize) i32!NumberError {
     }
 
     let mut exp = 0i32;
-    for (byte: text.&[i...text.len()].iter()) {
+    for (byte: text.&[i...text.@len()].iter()) {
         if (exp < 10000) {
             exp = exp * 10 + ((byte - b'0') as i32);
         }
@@ -133,7 +133,7 @@ pub/ fn parse_f64(text: &[u8]) f64!NumberError {
     let mut dropped = 0u8;
     let mut sticky = false;
     // Integer digits feed a bounded mantissa while tracking dropped precision.
-    while (i < text.len()) {
+    while (i < text.@len()) {
         let byte = text.[i];
         if (byte == b'.' or byte == b'e' or byte == b'E') break;
         if (digits_kept < 19) {
@@ -148,10 +148,10 @@ pub/ fn parse_f64(text: &[u8]) f64!NumberError {
         i += 1;
     }
 
-    if (i < text.len() and text.[i] == b'.') {
+    if (i < text.@len() and text.[i] == b'.') {
         i += 1;
         // Fractional digits share the same bounded mantissa and extend scale.
-        while (i < text.len() and is_digit(text.[i])) {
+        while (i < text.@len() and is_digit(text.[i])) {
             if (digits_kept < 19) {
                 mantissa = mantissa * 10 + ((text.[i] - b'0') as u64);
                 digits_kept += 1;

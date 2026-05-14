@@ -169,7 +169,7 @@ fn check_valid_cases() void {
             .sum(@loc(), t);
         let mut compact: [256]u8 = undef;
         let written = value
-            .render_compact(alloc, compact..&[0...compact.len()])
+            .render_compact(alloc, compact..&[0...compact.@len()])
             .should_ok()
             .sum(@loc(), t);
         compact.&[0...written]

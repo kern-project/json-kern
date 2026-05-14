@@ -56,7 +56,7 @@ fn replace_range(
     let current_len = storage.len();
     let removed = end - start;
     let suffix_len = current_len - end;
-    if (replacement.len() > USIZE_MAX - (current_len - removed)) {
+    if (replacement.@len() > USIZE_MAX - (current_len - removed)) {
         return .{ Err: .CapacityOverflow };
     }
 
@@ -97,7 +97,7 @@ fn build_compact_fragment(
 
 // Returns the insertion byte offset before a container's closing delimiter.
 fn before_closing(value: Value) usize {
-    return value.raw.len() - 1usize;
+    return value.raw.@len() - 1usize;
 }
 
 // Counts array elements and returns the last element range when present.
@@ -140,10 +140,10 @@ fn array_item_at(
 
 // Returns the byte range covering an array item, including its comma when present.
 fn array_item_range(value: Value, item: Value) EntryRange {
-    let item_start = (item.raw.ptr() as usize) - (value.raw.ptr() as usize);
-    let item_end = item_start + item.raw.len();
+    let item_start = (item.raw.@ptr() as usize) - (value.raw.@ptr() as usize);
+    let item_end = item_start + item.raw.@len();
     if (item_start > 1usize) return .{ start: item_start - 1usize, end: item_end };
-    if (item_end < value.raw.len() - 1usize) {
+    if (item_end < value.raw.@len() - 1usize) {
         return .{ start: item_start, end: item_end + 1usize };
     }
     return .{ start: item_start, end: item_end };
@@ -173,13 +173,13 @@ fn object_find_entry(
 
 // Returns the byte range covering the whole object entry, including its comma when present.
 fn object_entry_range(value: Value, entry: ObjectEntry) EntryRange {
-    let key_start = (entry.key_raw.ptr() as usize) - (value.raw.ptr() as usize);
-    let value_ptr = entry.value.raw.ptr() as usize;
-    let root_ptr = value.raw.ptr() as usize;
+    let key_start = (entry.key_raw.@ptr() as usize) - (value.raw.@ptr() as usize);
+    let value_ptr = entry.value.raw.@ptr() as usize;
+    let root_ptr = value.raw.@ptr() as usize;
     let value_start = value_ptr - root_ptr;
-    let value_end = value_start + entry.value.raw.len();
+    let value_end = value_start + entry.value.raw.@len();
     if (key_start > 1usize) return .{ start: key_start - 1usize, end: value_end };
-    if (value_end < value.raw.len() - 1usize) {
+    if (value_end < value.raw.@len() - 1usize) {
         return .{ start: key_start, end: value_end + 1usize };
     }
     return .{ start: key_start, end: value_end };
@@ -213,7 +213,7 @@ pub/ fn compact_into(
     }).?;
 
     storage.clear();
-    let out = storage.try_append_uninit(alloc, text.len())
+    let out = storage.try_append_uninit(alloc, text.@len())
         .map_err(wrap_alloc_error)
         .?;
     let written = render_into(alloc, text, out)
@@ -363,7 +363,7 @@ impl &mut DocumentValueMut {
         let insert = self.start + before_closing(value);
         let mut joined = String.{};
         defer joined..&.deinit(alloc);
-        if (value.raw.len() != 2usize) {
+        if (value.raw.@len() != 2usize) {
             joined..&.try_push_str(alloc, ",").map_err(wrap_alloc_error).?;
         }
         joined..&.try_push_str(alloc, fragment.&.as_str()).map_err(wrap_alloc_error).?;
@@ -423,7 +423,7 @@ impl &mut DocumentValueMut {
 
         let mut fragment = String.{};
         defer fragment..&.deinit(alloc);
-        if (value.raw.len() != 2usize) {
+        if (value.raw.@len() != 2usize) {
             fragment..&.try_push_str(alloc, ",").map_err(wrap_alloc_error).?;
         }
         build_object_entry_fragment(
@@ -458,10 +458,10 @@ impl &mut DocumentValueMut {
         let mut fragment = String.{};
         defer fragment..&.deinit(alloc);
         build_compact_fragment(alloc, fragment..&, value_json).?;
-        let entry_value_ptr = entry.value.raw.ptr() as usize;
-        let object_ptr = value.raw.ptr() as usize;
+        let entry_value_ptr = entry.value.raw.@ptr() as usize;
+        let object_ptr = value.raw.@ptr() as usize;
         let local_start = entry_value_ptr - object_ptr;
-        let local_end = local_start + entry.value.raw.len();
+        let local_end = local_start + entry.value.raw.@len();
         replace_range(
             self.document.storage..&,
             alloc,

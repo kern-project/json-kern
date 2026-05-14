@@ -24,13 +24,13 @@ pub/ fn render_into(
     let mut dst = 0usize;
     let mut in_string = false;
     // Rendering tracks string state and output position, so it is a stateful scan.
-    while (src < text.len()) {
+    while (src < text.@len()) {
         let byte = text.[src];
         if (!in_string and is_ws(byte)) {
             src += 1;
             continue;
         }
-        if (dst >= out.len()) return .{ Err: .ShortOutput };
+        if (dst >= out.@len()) return .{ Err: .ShortOutput };
         out.[dst] = byte;
         dst += 1;
 
@@ -38,8 +38,8 @@ pub/ fn render_into(
             in_string = !in_string;
         } else if (in_string and byte == b'\\') {
             src += 1;
-            if (src >= text.len()) return .{ Err: .{ Parse: .UnexpectedEof } };
-            if (dst >= out.len()) return .{ Err: .ShortOutput };
+            if (src >= text.@len()) return .{ Err: .{ Parse: .UnexpectedEof } };
+            if (dst >= out.@len()) return .{ Err: .ShortOutput };
             out.[dst] = text.[src];
             dst += 1;
         }
@@ -63,7 +63,7 @@ pub/ fn write_into(
     let mut in_string = false;
     let mut one: [1]u8 = undef;
     // Rendering tracks string state and writer progress, so it is a stateful scan.
-    while (src < text.len()) {
+    while (src < text.@len()) {
         let byte = text.[src];
         if (!in_string and is_ws(byte)) {
             src += 1;
@@ -78,7 +78,7 @@ pub/ fn write_into(
             in_string = !in_string;
         } else if (in_string and byte == b'\\') {
             src += 1;
-            if (src >= text.len()) return .{ Err: .{ Parse: .UnexpectedEof } };
+            if (src >= text.@len()) return .{ Err: .{ Parse: .UnexpectedEof } };
             one.[0] = text.[src];
             if (writer.write(one..&[0...1]) != 1) return .{ Err: .WriteFailed };
             written += 1;

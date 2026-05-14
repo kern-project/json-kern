@@ -37,9 +37,9 @@ fn write_byte(writer: &mut Write, byte: u8) void!WriteError {
 
 // Validates a complete raw JSON number without accepting trailing bytes.
 fn validate_number(bytes: &[u8]) void!WriteError {
-    if (bytes.len() == 0) return .{ Err: .InvalidNumber };
+    if (bytes.@len() == 0) return .{ Err: .InvalidNumber };
     let .{ Ok: end } = number_end(bytes, 0) else return .{ Err: .InvalidNumber };
-    if (end != bytes.len()) return .{ Err: .InvalidNumber };
+    if (end != bytes.@len()) return .{ Err: .InvalidNumber };
     return .{ Ok: {} };
 }
 
@@ -237,7 +237,7 @@ pub fn write_escaped_string(writer: &mut Write, text: &[u8]) void!WriteError {
     write_byte(writer, b'"').?;
     let mut i = 0usize;
     // String escaping is a stateful byte scan with per-byte escape decisions.
-    while (i < text.len()) {
+    while (i < text.@len()) {
         match (text.[i]) {
             b'"' => write_all(writer, "\\\"").?,
             b'\\' => write_all(writer, "\\\\").?,

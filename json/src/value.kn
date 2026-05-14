@@ -107,7 +107,7 @@ impl Value {
     /// Returns raw string contents without the surrounding quotes.
     pub fn string_raw() ?&[u8] {
         if (self.kind != .String) return .None;
-        return .{ Some: self.raw.&[1...self.raw.len() - 1] };
+        return .{ Some: self.raw.&[1...self.raw.@len() - 1] };
     }
 
     /// Returns the byte length of this string after JSON escape decoding.
@@ -139,13 +139,13 @@ impl Value {
     /// Returns an array cursor, or `None` when this is not an array.
     pub fn array() ?ArrayCursor {
         if (self.kind != .Array) return .None;
-        return .{ Some: .{ data: self.raw.&[1...self.raw.len() - 1] } };
+        return .{ Some: .{ data: self.raw.&[1...self.raw.@len() - 1] } };
     }
 
     /// Returns an object cursor, or `None` when this is not an object.
     pub fn object() ?ObjectCursor {
         if (self.kind != .Object) return .None;
-        return .{ Some: .{ data: self.raw.&[1...self.raw.len() - 1] } };
+        return .{ Some: .{ data: self.raw.&[1...self.raw.@len() - 1] } };
     }
 
     /// Renders this borrowed value compactly into `out`.
@@ -186,7 +186,7 @@ impl &mut ArrayCursor {
     pub fn next(alloc: &mut Allocator) ?Value!ParseError {
         if (self.done) return .{ Ok: .None };
         let mut i = skip_ws(self.data, self.index);
-        if (i >= self.data.len()) {
+        if (i >= self.data.@len()) {
             self.done = true;
             return .{ Ok: .None };
         }
@@ -196,7 +196,7 @@ impl &mut ArrayCursor {
         }
 
         let value = parse_at_with_stack(alloc, self.data, i).?;
-        self.index = i + value.raw.len();
+        self.index = i + value.raw.@len();
         self.first = false;
         return .{ Ok: .{ Some: value } };
     }
@@ -210,7 +210,7 @@ impl &mut ObjectCursor {
     pub fn next(alloc: &mut Allocator) ?ObjectEntry!ParseError {
         if (self.done) return .{ Ok: .None };
         let mut i = skip_ws(self.data, self.index);
-        if (i >= self.data.len()) {
+        if (i >= self.data.@len()) {
             self.done = true;
             return .{ Ok: .None };
         }
@@ -219,17 +219,17 @@ impl &mut ObjectCursor {
             i = skip_ws(self.data, i + 1);
         }
 
-        if (i >= self.data.len()) return .{ Err: .UnexpectedEof };
+        if (i >= self.data.@len()) return .{ Err: .UnexpectedEof };
         if (self.data.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
         let key_end = string_end(self.data, i).?;
         let key_raw = self.data.&[i...key_end];
         let key_text = self.data.&[i + 1...key_end - 1];
         i = skip_ws(self.data, key_end);
-        if (i >= self.data.len()) return .{ Err: .UnexpectedEof };
+        if (i >= self.data.@len()) return .{ Err: .UnexpectedEof };
         if (self.data.[i] != b':') return .{ Err: .{ MissingColon: i } };
         i = skip_ws(self.data, i + 1);
         let value = parse_at_with_stack(alloc, self.data, i).?;
-        self.index = i + value.raw.len();
+        self.index = i + value.raw.@len();
         self.first = false;
         return .{ Ok: .{ Some: .{ key_raw: key_raw, key_text: key_text, value: value } } };
     }

@@ -53,7 +53,7 @@ impl &mut BenchInput {
 
 // Parses a positive decimal iteration count without accepting partial input.
 fn parse_iterations(text: &[u8]) usize {
-    if (text.len() == 0) return 0usize;
+    if (text.@len() == 0) return 0usize;
     let mut value = 0usize;
     for (byte: text.iter()) {
         if (byte < b'0' or byte > b'9') return 0usize;
@@ -101,9 +101,9 @@ fn push(
 // Builds the default repeated JSON payload used when no input path is supplied.
 fn build_sample(alloc: &mut base.mem.alloc.Allocator) ?String {
     let mut out = string();
-    let reserve_bytes = HEADER.len()
-        + FOOTER.len()
-        + SAMPLE_REPETITIONS * (ROW.len() + ROW_SEP.len());
+    let reserve_bytes = HEADER.@len()
+        + FOOTER.@len()
+        + SAMPLE_REPETITIONS * (ROW.@len() + ROW_SEP.@len());
     let .{ Ok: _ } = out..&.try_reserve(alloc, reserve_bytes) else return .None;
     if (!push(out..&, alloc, HEADER)) return .None;
     let mut i = 0usize;
@@ -179,7 +179,7 @@ fn bench_parse(
     let start = time.monotonic().now();
     for (_: 0usize...iterations) {
         let .{ Ok: value } = text.parse_json(alloc) else return false;
-        sink += value.raw.len();
+        sink += value.raw.@len();
         sink += match (value.kind) {
             .Array => 1,
             .Object => 2,
@@ -192,7 +192,7 @@ fn bench_parse(
     print_stats(
         "parse",
         input_label,
-        text.len(),
+        text.@len(),
         iterations,
         start.elapsed(),
         sink,
@@ -211,12 +211,12 @@ fn bench_validate(
     let start = time.monotonic().now();
     for (_: 0usize...iterations) {
         let .{ Ok: _ } = text.validate_json(alloc) else return false;
-        sink += text.len();
+        sink += text.@len();
     }
     print_stats(
         "validate",
         input_label,
-        text.len(),
+        text.@len(),
         iterations,
         start.elapsed(),
         sink,
@@ -232,7 +232,7 @@ fn bench_compact(
     text: &[u8],
 ) bool {
     let mut out: [262144]u8 = undef;
-    if (text.len() > out.@len()) return false;
+    if (text.@len() > out.@len()) return false;
     let mut sink = 0usize;
     let start = time.monotonic().now();
     for (_: 0usize...iterations) {
@@ -245,7 +245,7 @@ fn bench_compact(
     print_stats(
         "compact",
         input_label,
-        text.len(),
+        text.@len(),
         iterations,
         start.elapsed(),
         sink,
@@ -268,12 +268,12 @@ fn bench_lookup(
         let object = object0..&;
         let .{ Ok: found } = object.find(alloc, "meta") else return false;
         let .{ Some: value } = found else return false;
-        sink += value.raw.len();
+        sink += value.raw.@len();
     }
     print_stats(
         "lookup",
         input_label,
-        text.len(),
+        text.@len(),
         iterations,
         start.elapsed(),
         sink,
@@ -299,7 +299,7 @@ fn bench_decode(
     print_stats(
         "decode",
         "inline",
-        DECODE_SAMPLE.len(),
+        DECODE_SAMPLE.@len(),
         iterations,
         start.elapsed(),
         sink,

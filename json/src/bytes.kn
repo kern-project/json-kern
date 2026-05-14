@@ -54,7 +54,7 @@ pub/ fn hex_value(byte: u8) u32 {
 pub/ fn skip_ws(text: &[u8], start: usize) usize {
     let mut i = start;
     // Whitespace skipping is a sentinel scan over bytes, not a whole-slice visit.
-    while (i < text.len() and is_ws(text.[i])) {
+    while (i < text.@len() and is_ws(text.[i])) {
         i += 1;
     }
     return i;
@@ -66,18 +66,18 @@ fn literal_end(
     start: usize,
     word: &[u8],
 ) usize!ParseError {
-    if (text.len() - start < word.len()) return .{ Err: .UnexpectedEof };
-    if (!bytes_eq(text.&[start...start + word.len()], word)) {
+    if (text.@len() - start < word.@len()) return .{ Err: .UnexpectedEof };
+    if (!bytes_eq(text.&[start...start + word.@len()], word)) {
         return .{ Err: .{ UnexpectedByte: start } };
     }
-    return .{ Ok: start + word.len() };
+    return .{ Ok: start + word.@len() };
 }
 
 /// Returns the byte offset after a complete JSON string.
 pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
     let mut i = start + 1;
     // String scanning jumps over escapes and stops at the first closing quote.
-    while (i < text.len()) {
+    while (i < text.@len()) {
         let byte = text.[i];
         if (byte == b'"') return .{ Ok: i + 1 };
         if (byte < 0x20) return .{ Err: .{ InvalidEscape: i } };
@@ -87,7 +87,7 @@ pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
         }
 
         i += 1;
-        if (i >= text.len()) return .{ Err: .UnexpectedEof };
+        if (i >= text.@len()) return .{ Err: .UnexpectedEof };
         match (text.[i]) {
             b'"' => {},
             b'\\' => {},
@@ -98,7 +98,7 @@ pub/ fn string_end(text: &[u8], start: usize) usize!ParseError {
             b'r' => {},
             b't' => {},
             b'u' => {
-                if (i + 4 >= text.len()) return .{ Err: .UnexpectedEof };
+                if (i + 4 >= text.@len()) return .{ Err: .UnexpectedEof };
                 let mut j = 0usize;
                 while (j < 4) {
                     if (!is_hex(text.[i + 1 + j])) {
@@ -120,41 +120,41 @@ pub/ fn number_end(text: &[u8], start: usize) usize!ParseError {
     let mut i = start;
     if (text.[i] == b'-') {
         i += 1;
-        if (i >= text.len()) return .{ Err: .{ InvalidNumber: start } };
+        if (i >= text.@len()) return .{ Err: .{ InvalidNumber: start } };
     }
 
     if (text.[i] == b'0') {
         i += 1;
-        if (i < text.len() and is_digit(text.[i])) {
+        if (i < text.@len() and is_digit(text.[i])) {
             return .{ Err: .{ InvalidNumber: i } };
         }
     } else if (text.[i] >= b'1' and text.[i] <= b'9') {
-        while (i < text.len() and is_digit(text.[i])) {
+        while (i < text.@len() and is_digit(text.[i])) {
             i += 1;
         }
     } else {
         return .{ Err: .{ InvalidNumber: i } };
     }
 
-    if (i < text.len() and text.[i] == b'.') {
+    if (i < text.@len() and text.[i] == b'.') {
         i += 1;
-        if (i >= text.len() or !is_digit(text.[i])) {
+        if (i >= text.@len() or !is_digit(text.[i])) {
             return .{ Err: .{ InvalidNumber: i } };
         }
-        while (i < text.len() and is_digit(text.[i])) {
+        while (i < text.@len() and is_digit(text.[i])) {
             i += 1;
         }
     }
 
-    if (i < text.len() and (text.[i] == b'e' or text.[i] == b'E')) {
+    if (i < text.@len() and (text.[i] == b'e' or text.[i] == b'E')) {
         i += 1;
-        if (i < text.len() and (text.[i] == b'+' or text.[i] == b'-')) {
+        if (i < text.@len() and (text.[i] == b'+' or text.[i] == b'-')) {
             i += 1;
         }
-        if (i >= text.len() or !is_digit(text.[i])) {
+        if (i >= text.@len() or !is_digit(text.[i])) {
             return .{ Err: .{ InvalidNumber: i } };
         }
-        while (i < text.len() and is_digit(text.[i])) {
+        while (i < text.@len() and is_digit(text.[i])) {
             i += 1;
         }
     }
@@ -164,7 +164,7 @@ pub/ fn number_end(text: &[u8], start: usize) usize!ParseError {
 
 // Dispatches scalar JSON values that do not need container stack state.
 fn scalar_end(text: &[u8], start: usize) usize!ParseError {
-    if (start >= text.len()) return .{ Err: .UnexpectedEof };
+    if (start >= text.@len()) return .{ Err: .UnexpectedEof };
     return match (text.[start]) {
         b'n' => literal_end(text, start, "null"),
         b't' => literal_end(text, start, "true"),
@@ -201,7 +201,7 @@ fn begin_value(
     alloc: &mut Allocator,
     index: usize,
 ) usize!ParseError {
-    if (index >= text.len()) return .{ Err: .UnexpectedEof };
+    if (index >= text.@len()) return .{ Err: .UnexpectedEof };
     return match (text.[index]) {
         b'[' => {
             push_frame(stack, alloc, .ArrayValueOrEnd).?;
@@ -233,7 +233,7 @@ pub/ fn value_end(
     while (true) {
         let .{ Some: state } = stack.pop() else return .{ Ok: i };
         i = skip_ws(text, i);
-        if (i >= text.len()) return .{ Err: .UnexpectedEof };
+        if (i >= text.@len()) return .{ Err: .UnexpectedEof };
 
         match (state) {
             .ArrayValueOrEnd => {
@@ -257,7 +257,7 @@ pub/ fn value_end(
                 if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
                 push_frame(stack, alloc, .ArrayCommaOrEnd).?;
                 i = skip_ws(text, i + 1);
-                if (i >= text.len()) return .{ Err: .UnexpectedEof };
+                if (i >= text.@len()) return .{ Err: .UnexpectedEof };
                 i = begin_value(
                     text,
                     stack,
@@ -278,7 +278,7 @@ pub/ fn value_end(
                 if (text.[i] != b':') return .{ Err: .{ MissingColon: i } };
                 push_frame(stack, alloc, .ObjectValue).?;
                 i = skip_ws(text, i + 1);
-                if (i >= text.len()) return .{ Err: .UnexpectedEof };
+                if (i >= text.@len()) return .{ Err: .UnexpectedEof };
                 i = begin_value(
                     text,
                     stack,
@@ -296,7 +296,7 @@ pub/ fn value_end(
                 }
                 if (text.[i] != b',') return .{ Err: .{ MissingCommaOrEnd: i } };
                 i = skip_ws(text, i + 1);
-                if (i >= text.len()) return .{ Err: .UnexpectedEof };
+                if (i >= text.@len()) return .{ Err: .UnexpectedEof };
                 if (text.[i] != b'"') return .{ Err: .{ UnexpectedByte: i } };
                 push_frame(stack, alloc, .ObjectColon).?;
                 i = string_end(text, i).?;
