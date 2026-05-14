@@ -8,7 +8,9 @@
 //! extraction fast and predictable. Owned documents are built on top of this
 //! borrowed layer.
 
-use base.coll.String;
+use base.coll.{List, String};
+use base.io.Write;
+use base.mem.alloc.Allocator;
 
 mod bytes;
 mod decode;
@@ -16,8 +18,11 @@ mod format;
 mod number;
 mod parser;
 mod render;
+mod builder;
 mod document;
 mod value;
+
+pub use .builder.{writer, write_escaped_string};
 
 /// JSON value categories.
 pub enum Kind {
@@ -128,6 +133,57 @@ pub enum DocumentError {
     CapacityOverflow,
     /// The allocator could not satisfy an owned storage request.
     OutOfMemory,
+};
+
+/// JSON construction failures.
+pub enum WriteError {
+    /// The backing container stack grew past addressable capacity.
+    CapacityOverflow,
+    /// The allocator could not satisfy writer state storage.
+    OutOfMemory,
+    /// The output sink stopped accepting bytes before the JSON text was complete.
+    WriteFailed,
+    /// A writer method was called in an order that cannot form JSON.
+    InvalidState,
+    /// `finish()` was called before every opened array or object was closed.
+    UnclosedContainer,
+    /// `raw_number()` received bytes that are not exactly one JSON number.
+    InvalidNumber,
+};
+
+/// A streaming JSON writer that inserts separators and escapes strings.
+///
+/// `JsonWriter` borrows the caller-provided output writer and allocator. The
+/// allocator is used only for nested array/object state. The produced bytes are
+/// written incrementally; no owned JSON buffer is built unless the chosen sink
+/// stores one.
+pub struct JsonWriter {
+    /// Allocator used for the nested array/object state stack.
+    pub/ alloc: &mut Allocator,
+    /// Output sink receiving JSON bytes incrementally.
+    pub/ writer: &mut Write,
+    /// Open array/object state from root to current container.
+    pub/ stack: List[JsonWriterState] = List[JsonWriterState].{},
+    /// Whether the single root value has already been started.
+    pub/ wrote_root: bool = false,
+};
+
+/// Open JSON container kind tracked by `JsonWriter`.
+pub/ enum JsonWriterContainer {
+    /// Array container.
+    Array,
+    /// Object container.
+    Object,
+};
+
+/// One open container frame in a streaming `JsonWriter`.
+pub/ struct JsonWriterState {
+    /// Current container kind.
+    pub/ kind: JsonWriterContainer,
+    /// Whether the next entry is the first entry in this container.
+    pub/ first: bool = true,
+    /// Whether an object container is waiting for its next key.
+    pub/ expecting_key: bool = false,
 };
 
 /// Borrowed JSON value view.

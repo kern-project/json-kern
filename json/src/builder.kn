@@ -1,0 +1,263 @@
+//! Streaming JSON construction.
+//!
+//! The writer owns no output storage. It borrows a `base.io.Write`, tracks
+//! nested container state, and escapes string/key bytes as JSON string payloads.
+
+use base.io.Write;
+use base.mem.alloc.{AllocError, Allocator};
+
+use ..{
+    JsonWriter,
+    JsonWriterContainer,
+    JsonWriterState,
+    WriteError,
+};
+use ..bytes.number_end;
+
+// Preserves allocation failure shape in the writer error domain.
+fn wrap_alloc_error(err: AllocError) WriteError {
+    return match (err) {
+        .CapacityOverflow => .CapacityOverflow,
+        .OutOfMemory => .OutOfMemory,
+    };
+}
+
+// Writes every byte or reports the sink failure explicitly.
+fn write_all(writer: &mut Write, bytes: &[u8]) void!WriteError {
+    if (!writer.write_all(bytes)) return .{ Err: .WriteFailed };
+    return .{ Ok: {} };
+}
+
+// Writes one ASCII byte through the same error path as longer slices.
+fn write_byte(writer: &mut Write, byte: u8) void!WriteError {
+    let mut one: [1]u8 = undef;
+    one.[0] = byte;
+    return write_all(writer, one.&[0...1]);
+}
+
+// Validates a complete raw JSON number without accepting trailing bytes.
+fn validate_number(bytes: &[u8]) void!WriteError {
+    if (bytes.len() == 0) return .{ Err: .InvalidNumber };
+    let .{ Ok: end } = number_end(bytes, 0) else return .{ Err: .InvalidNumber };
+    if (end != bytes.len()) return .{ Err: .InvalidNumber };
+    return .{ Ok: {} };
+}
+
+// Converts a digit in `0..10` to its ASCII byte.
+fn decimal_digit(digit: u8) u8 {
+    return b'0' + digit;
+}
+
+// Converts a digit in `0..16` to its lowercase hexadecimal byte.
+fn hex_digit(digit: u8) u8 {
+    if (digit < 10) return b'0' + digit;
+    return b'a' + (digit - 10);
+}
+
+// Writes an unsigned integer without depending on generic formatting failure policy.
+fn write_u64_number(writer: &mut Write, value: u64) void!WriteError {
+    let mut buf: [20]u8 = undef;
+    let mut i = buf.@len();
+    let mut curr = value;
+    if (curr == 0) return write_all(writer, "0");
+    while (curr > 0) {
+        i -= 1;
+        buf.[i] = decimal_digit((curr % 10) as u8);
+        curr /= 10;
+    }
+    return write_all(writer, buf.&[i...buf.@len()]);
+}
+
+// Writes a signed integer, including the minimum value, as a JSON number.
+fn write_i64_number(writer: &mut Write, value: i64) void!WriteError {
+    if (value < 0) {
+        write_byte(writer, b'-').?;
+        let unsigned = value as u64;
+        let magnitude = (~unsigned) + 1u64;
+        return write_u64_number(writer, magnitude);
+    }
+    return write_u64_number(writer, value as u64);
+}
+
+impl &mut JsonWriter {
+    /// Releases internal writer state storage.
+    ///
+    /// This does not write closing delimiters. Call `finish()` first when the
+    /// JSON text must be complete.
+    pub fn deinit() void {
+        let alloc = self.alloc;
+        let writer = self.writer;
+        self.stack..&.deinit(self.alloc);
+        self.* = JsonWriter.{ alloc: alloc, writer: writer };
+    }
+
+    /// Completes the writer after exactly one root value has been written.
+    pub fn finish() void!WriteError {
+        if (self.stack.&.len() != 0) return .{ Err: .UnclosedContainer };
+        if (!self.wrote_root) return .{ Err: .InvalidState };
+        return .{ Ok: {} };
+    }
+
+    /// Begins a JSON array value.
+    pub fn begin_array() void!WriteError {
+        self.stack..&.try_reserve(self.alloc, 1).map_err(wrap_alloc_error).?;
+        self.before_value().?;
+        write_byte(self.writer, b'[').?;
+        self.stack..&.try_push(
+            self.alloc,
+            JsonWriterState.{ kind: .Array },
+        ).map_err(wrap_alloc_error).?;
+        return .{ Ok: {} };
+    }
+
+    /// Ends the current JSON array.
+    pub fn end_array() void!WriteError {
+        let .{ Some: state } = self.stack..&.pop() else return .{ Err: .InvalidState };
+        match (state.kind) {
+            .Array => {},
+            .Object => return .{ Err: .InvalidState },
+        }
+        write_byte(self.writer, b']').?;
+        return .{ Ok: {} };
+    }
+
+    /// Begins a JSON object value.
+    pub fn begin_object() void!WriteError {
+        self.stack..&.try_reserve(self.alloc, 1).map_err(wrap_alloc_error).?;
+        self.before_value().?;
+        write_byte(self.writer, b'{').?;
+        self.stack..&.try_push(
+            self.alloc,
+            JsonWriterState.{ kind: .Object, expecting_key: true },
+        ).map_err(wrap_alloc_error).?;
+        return .{ Ok: {} };
+    }
+
+    /// Ends the current JSON object.
+    pub fn end_object() void!WriteError {
+        let .{ Some: state } = self.stack..&.pop() else return .{ Err: .InvalidState };
+        match (state.kind) {
+            .Object => {
+                if (!state.expecting_key) return .{ Err: .InvalidState };
+            },
+            .Array => return .{ Err: .InvalidState },
+        }
+        write_byte(self.writer, b'}').?;
+        return .{ Ok: {} };
+    }
+
+    /// Writes an object key and prepares for the corresponding value.
+    pub fn key(text: &[u8]) void!WriteError {
+        let .{ Some: ptr } = self.stack..&.get_ptr(self.stack.&.len() - 1)
+            else return .{ Err: .InvalidState };
+        match (ptr.*.kind) {
+            .Object => {},
+            .Array => return .{ Err: .InvalidState },
+        }
+        if (!ptr.*.expecting_key) return .{ Err: .InvalidState };
+
+        if (!ptr.*.first) write_byte(self.writer, b',').?;
+        ptr.*.first = false;
+        write_escaped_string(self.writer, text).?;
+        write_byte(self.writer, b':').?;
+        ptr.*.expecting_key = false;
+        return .{ Ok: {} };
+    }
+
+    /// Writes JSON null.
+    pub fn null() void!WriteError {
+        self.before_value().?;
+        return write_all(self.writer, "null");
+    }
+
+    /// Writes a JSON boolean.
+    pub fn bool_value(value: bool) void!WriteError {
+        self.before_value().?;
+        if (value) return write_all(self.writer, "true");
+        return write_all(self.writer, "false");
+    }
+
+    /// Writes a signed integer as a JSON number.
+    pub fn i64_value(value: i64) void!WriteError {
+        self.before_value().?;
+        return write_i64_number(self.writer, value);
+    }
+
+    /// Writes an unsigned integer as a JSON number.
+    pub fn u64_value(value: u64) void!WriteError {
+        self.before_value().?;
+        return write_u64_number(self.writer, value);
+    }
+
+    /// Writes already-rendered JSON number bytes after validating them.
+    pub fn raw_number(bytes: &[u8]) void!WriteError {
+        validate_number(bytes).?;
+        self.before_value().?;
+        return write_all(self.writer, bytes);
+    }
+
+    /// Writes a JSON string value, escaping control bytes, quotes, and backslashes.
+    pub fn string(text: &[u8]) void!WriteError {
+        self.before_value().?;
+        return write_escaped_string(self.writer, text);
+    }
+
+    // Prepares the surrounding container before a value is emitted.
+    fn before_value() void!WriteError {
+        let len = self.stack.&.len();
+        if (len == 0) {
+            if (self.wrote_root) return .{ Err: .InvalidState };
+            self.wrote_root = true;
+            return .{ Ok: {} };
+        }
+
+        let .{ Some: ptr } = self.stack..&.get_ptr(len - 1)
+            else return .{ Err: .InvalidState };
+        match (ptr.*.kind) {
+            .Array => {
+                if (!ptr.*.first) write_byte(self.writer, b',').?;
+                ptr.*.first = false;
+            },
+            .Object => {
+                if (ptr.*.expecting_key) return .{ Err: .InvalidState };
+                ptr.*.expecting_key = true;
+            },
+        }
+        return .{ Ok: {} };
+    }
+}
+
+/// Creates a streaming JSON writer over `writer`.
+pub fn writer(alloc: &mut Allocator, writer: &mut Write) JsonWriter {
+    return .{ alloc: alloc, writer: writer };
+}
+
+/// Writes `text` as a JSON string, including surrounding quotes.
+pub fn write_escaped_string(writer: &mut Write, text: &[u8]) void!WriteError {
+    write_byte(writer, b'"').?;
+    let mut i = 0usize;
+    // String escaping is a stateful byte scan with per-byte escape decisions.
+    while (i < text.len()) {
+        match (text.[i]) {
+            b'"' => write_all(writer, "\\\"").?,
+            b'\\' => write_all(writer, "\\\\").?,
+            b'\n' => write_all(writer, "\\n").?,
+            b'\r' => write_all(writer, "\\r").?,
+            b'\t' => write_all(writer, "\\t").?,
+            8 => write_all(writer, "\\b").?,
+            12 => write_all(writer, "\\f").?,
+            _ => {
+                if (text.[i] < 0x20) {
+                    let mut hex: [6]u8 = [6]u8.{ b'\\', b'u', b'0', b'0', b'0', b'0' };
+                    hex.[4] = hex_digit(text.[i] >> 4);
+                    hex.[5] = hex_digit(text.[i] & 0x0f);
+                    write_all(writer, hex.&[0...6]).?;
+                } else {
+                    write_byte(writer, text.[i]).?;
+                }
+            },
+        }
+        i += 1;
+    }
+    return write_byte(writer, b'"');
+}

@@ -33,6 +33,7 @@ enum AppError {
     Parse: json.ParseError,
     Key: json.KeyError,
     Render: json.RenderError,
+    Write: json.WriteError,
 }
 
 fn app(alloc: &mut base.mem.alloc.Allocator) void!AppError {
@@ -70,6 +71,28 @@ fn app(alloc: &mut base.mem.alloc.Allocator) void!AppError {
     _ = root.write_compact(alloc, writer)
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .?;
+
+    let mut built = string();
+    defer built..&.deinit(alloc);
+    let mut built_writer = built..&.writer(alloc);
+    let built_sink = (built_writer..& as &mut Write);
+    let json_writer = json.writer(alloc, built_sink)..&;
+    defer json_writer.deinit();
+    json_writer.begin_object().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.key("name").map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.string("kern").map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.end_object().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.finish().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
 
     let doc = root.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {
@@ -115,6 +138,8 @@ fn main() i32 {
   compact JSON into caller-owned output.
 - `value.write_compact(alloc, writer)` and `source.write_json_compact(alloc, writer)` stream
   compact JSON into a `base.io.Write` sink.
+- `json.writer(alloc, writer)` constructs JSON into a `base.io.Write` sink,
+  inserting separators and escaping string/key bytes.
 - `value.clone_document(alloc)` and `source.parse_json_document(alloc)` build
   an owned compact `Document`.
 - `document.root(alloc)` returns a borrowed view over the owned compact storage.
@@ -124,6 +149,13 @@ fn main() i32 {
 String decoding is explicit: parsing validates JSON escape syntax, while
 `write_string`, `clone_string`, `write_key`, and `clone_key` decode Unicode
 escapes into UTF-8 at the caller's chosen allocation boundary.
+
+String construction is explicit too: `JsonWriter.string()` and
+`JsonWriter.key()` escape quotes, backslashes, control bytes, and common JSON
+control escapes while writing directly into the caller's sink. `raw_number()`
+accepts only one complete JSON number; floating-point formatting policy is left
+to callers until Kern's freestanding number formatting grows a stable float
+surface.
 
 ## Performance Notes
 
@@ -144,6 +176,7 @@ The library source is split by responsibility:
   APIs.
 - `json/src/decode.kn`: JSON string and key escape decoding.
 - `json/src/render.kn`: compact rendering into buffers and `base.io.Write`.
+- `json/src/builder.kn`: streaming JSON construction and string escaping.
 - `json/src/document.kn`: owned compact `Document`.
 - `json/src/format.kn`: diagnostic formatting and exact error equality.
 

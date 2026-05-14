@@ -29,6 +29,7 @@ incubator experiment with a redesigned public surface, not a file move.
   - `value.kn`
   - `document.kn`
   - `render.kn`
+  - `builder.kn`
   - `format.kn`
 
 ## Priority 1: Borrowed Parser And Values
@@ -66,17 +67,15 @@ incubator experiment with a redesigned public surface, not a file move.
 ## Priority 3: Rendering And Writing
 
 - [x] Provide compact rendering into `&mut [u8]` and into `base.io.Write`.
-- [ ] Add a fluent writer/builder for constructing JSON without manually
+- [x] Add a fluent writer/builder for constructing JSON without manually
   counting separators.
-- [~] Keep escaping rules explicit and documented next to writer APIs. String
-  decode rules are documented; construction-time escaping still belongs with the
-  pending builder.
+- [x] Keep escaping rules explicit and documented next to writer APIs.
 - [x] Make buffer sizing and short-output failures structured.
 
 ## Priority 4: Documentation And Tests
 
 - [~] README shows borrowed parsing, owned document cloning/replacement, and
-  rendering. Fine-grained owned mutation is pending with the API.
+  rendering/writing. Fine-grained owned mutation is pending with the API.
 - [x] Module docs teach ownership, duplicate-key policy, string decoding, and
   numeric strictness for the implemented modules.
 - [~] Public items need `///` contracts for allocation, borrowing, cleanup, and
@@ -90,6 +89,7 @@ incubator experiment with a redesigned public surface, not a file move.
   - [x] integer errors
   - [x] float errors
   - [x] duplicate-key first-match and duplicate rejection behavior
+  - [x] streaming writer separators, escaping, and state errors
   - [~] owned mutation and rendering; root replacement and rendering covered,
     fine-grained mutation pending
   - [x] README-shaped compile tests

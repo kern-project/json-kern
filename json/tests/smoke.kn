@@ -467,6 +467,112 @@ fn check_compact_render() void {
         .sum(@loc(), t);
 }
 
+// Covers streaming JSON construction, separators, escaping, and state errors.
+fn check_json_writer() void {
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
+    let alloc = gpa().on(page)..&;
+    defer alloc.deinit();
+
+    let mut out = string();
+    defer out..&.deinit(alloc);
+    let mut string_writer = out..&.writer(alloc);
+    let sink = (string_writer..& as &mut Write);
+    let writer = json.writer(alloc, sink)..&;
+    defer writer.deinit();
+
+    writer
+        .begin_object()
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .key("name")
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .string("kern\njson\x1f")
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .key("enabled")
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .bool_value(true)
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .key("items")
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .begin_array()
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .i64_value(1i64)
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .u64_value(2u64)
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .raw_number("-3.5e2")
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .null()
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .end_array()
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .end_object()
+        .should_ok()
+        .sum(@loc(), t);
+    writer
+        .finish()
+        .should_ok()
+        .sum(@loc(), t);
+    out.&.as_str()
+        .should()
+        .eq("{\"name\":\"kern\\njson\\u001f\",\"enabled\":true,\"items\":[1,2,-3.5e2,null]}")
+        .sum(@loc(), t);
+    out.&.as_str()
+        .validate_json(alloc)
+        .should_ok()
+        .sum(@loc(), t);
+
+    let mut invalid_out = string();
+    defer invalid_out..&.deinit(alloc);
+    let mut invalid_string_writer = invalid_out..&.writer(alloc);
+    let invalid_sink = (invalid_string_writer..& as &mut Write);
+    let invalid = json.writer(alloc, invalid_sink)..&;
+    defer invalid.deinit();
+    invalid
+        .key("outside")
+        .should_err()
+        .eq(json.WriteError.InvalidState)
+        .sum(@loc(), t);
+    invalid
+        .raw_number("01")
+        .should_err()
+        .eq(json.WriteError.InvalidNumber)
+        .sum(@loc(), t);
+    invalid
+        .begin_array()
+        .should_ok()
+        .sum(@loc(), t);
+    invalid
+        .finish()
+        .should_err()
+        .eq(json.WriteError.UnclosedContainer)
+        .sum(@loc(), t);
+}
+
 // Covers owned compact document creation, root views, and whole-root replace.
 fn check_owned_document() void {
     let t = report(io.stderr())..&;
@@ -517,6 +623,7 @@ fn smoke() i32 {
     check_object_cursor_and_lookup();
     check_parse_errors();
     check_compact_render();
+    check_json_writer();
     check_owned_document();
     return 0;
 }

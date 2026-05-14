@@ -10,6 +10,7 @@ enum AppError {
     Parse: json.ParseError,
     Key: json.KeyError,
     Render: json.RenderError,
+    Write: json.WriteError,
 }
 
 // Keeps the README-shaped fluent API path compiling as a real program.
@@ -58,6 +59,28 @@ fn app() void!AppError {
     _ = value.write_compact(alloc, writer)
         .map_err([](err: json.RenderError) AppError { return .{ Render: err }; })
         .?;
+
+    let mut built = string();
+    defer built..&.deinit(alloc);
+    let mut built_writer = built..&.writer(alloc);
+    let built_sink = (built_writer..& as &mut Write);
+    let json_writer = json.writer(alloc, built_sink)..&;
+    defer json_writer.deinit();
+    json_writer.begin_object().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.key("name").map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.string("kern").map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.end_object().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
+    json_writer.finish().map_err([](err: json.WriteError) AppError {
+        return .{ Write: err };
+    }).?;
 
     let doc0 = value.clone_document(alloc)
         .map_err([](_: json.DocumentError) AppError {

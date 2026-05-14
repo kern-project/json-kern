@@ -10,6 +10,7 @@ use ..{
     ParseLocation,
     RenderError,
     StringError,
+    WriteError,
 };
 
 // Extracts exact source offsets only from variants that carry one.
@@ -188,6 +189,20 @@ impl &DocumentError : Formatable {
     }
 }
 
+impl &WriteError : Formatable {
+    /// Writes a stable diagnostic name for the JSON construction error.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .CapacityOverflow => _ = writer.write("json.WriteError.CapacityOverflow"),
+            .OutOfMemory => _ = writer.write("json.WriteError.OutOfMemory"),
+            .WriteFailed => _ = writer.write("json.WriteError.WriteFailed"),
+            .InvalidState => _ = writer.write("json.WriteError.InvalidState"),
+            .UnclosedContainer => _ = writer.write("json.WriteError.UnclosedContainer"),
+            .InvalidNumber => _ = writer.write("json.WriteError.InvalidNumber"),
+        }
+    }
+}
+
 impl ParseError : Eq[ParseError] {
     /// Compares parse error variants and offsets exactly.
     pub fn eq(other: ParseError) bool {
@@ -289,6 +304,20 @@ impl KeyError : Eq[KeyError] {
                 _ => false,
             },
             .DuplicateKey => match (other) { .DuplicateKey => true, _ => false },
+        };
+    }
+}
+
+impl WriteError : Eq[WriteError] {
+    /// Compares JSON construction error variants exactly.
+    pub fn eq(other: WriteError) bool {
+        return match (self) {
+            .CapacityOverflow => match (other) { .CapacityOverflow => true, _ => false },
+            .OutOfMemory => match (other) { .OutOfMemory => true, _ => false },
+            .WriteFailed => match (other) { .WriteFailed => true, _ => false },
+            .InvalidState => match (other) { .InvalidState => true, _ => false },
+            .UnclosedContainer => match (other) { .UnclosedContainer => true, _ => false },
+            .InvalidNumber => match (other) { .InvalidNumber => true, _ => false },
         };
     }
 }
