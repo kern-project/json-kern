@@ -1,6 +1,5 @@
 [package]
 name = "json"
-publish = true
 description = "JSON parsing and document utilities for Kern"
 
 [lib]

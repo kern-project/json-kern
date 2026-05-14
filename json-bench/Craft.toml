@@ -1,6 +1,5 @@
 [package]
 name = "json-bench"
-publish = false
 description = "Micro-benchmarks for json-kern"
 
 [[bin]]

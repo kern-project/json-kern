@@ -10,7 +10,7 @@ version = "0.1.0"
 source = "workspace-member"
 source-value = "json"
 manifest = "json/Craft.toml"
-manifest-digest = "fnv1a64:91c051596cb3891d"
+manifest-digest = "fnv1a64:cd7e7fe6f7836ffd"
 
 [[package]]
 id = "json-bench 0.1.0 workspace-member:json-bench"
@@ -19,7 +19,7 @@ version = "0.1.0"
 source = "workspace-member"
 source-value = "json-bench"
 manifest = "json-bench/Craft.toml"
-manifest-digest = "fnv1a64:2cd1c5fa4851b00b"
+manifest-digest = "fnv1a64:2a2e9aeb76ba9c92"
 
 [[package]]
 id = "json-test 0.1.0 workspace-member:json-test"
@@ -28,7 +28,7 @@ version = "0.1.0"
 source = "workspace-member"
 source-value = "json-test"
 manifest = "json-test/Craft.toml"
-manifest-digest = "fnv1a64:61b4bf5e2f638cc3"
+manifest-digest = "fnv1a64:3eb9d6012f268d18"
 
 [[package-target]]
 package = "json 0.1.0 workspace-member:json"
@@ -82,12 +82,3 @@ name = "json"
 package = "json"
 target = "local"
 target-id = "json 0.1.0 workspace-member:json"
-
-[[publish-proof]]
-package-id = "json 0.1.0 workspace-member:json"
-package = "json"
-version = "0.1.0"
-kern = "0.7.6"
-repository = "https://github.com/softfault/json-kern.git"
-manifest-sha256 = "sha256:fdad1d5d5014ed8c77396f7f6149f7d6ed29eaca9ba017c2a5b350553b33f89d"
-source-sha256 = "sha256:27e7211b6f8df125dc4d360e3140a044e22863f4e91b0f8b744839463215413e"

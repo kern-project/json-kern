@@ -1,6 +1,5 @@
 [package]
 name = "json-test"
-publish = false
 description = "Extended conformance tests for json-kern"
 
 [[bin]]
