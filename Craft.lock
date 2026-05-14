@@ -82,3 +82,17 @@ name = "json"
 package = "json"
 target = "local"
 target-id = "json 0.1.0 workspace-member:json"
+
+[[publish-proof]]
+package-id = "json 0.1.0 workspace-member:json"
+path = "json"
+package = "json"
+version = "0.1.0"
+kern = "0.7.6"
+description = "JSON parsing and document utilities for Kern"
+license = "MIT"
+authors = ["softfault <givenyoung46@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/kern-project/json-kern.git"
+manifest-sha256 = "sha256:ffdf813513d11f7375d56e5df9f6942ed893981b71e6392f5791a95bcf3f0b08"
+source-sha256 = "sha256:5088fdb88172c23a83c4c134cf0509c433910b020863c0baba7b4da8ddbc3dc8"
