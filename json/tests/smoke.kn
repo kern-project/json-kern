@@ -613,6 +613,85 @@ fn check_owned_document() void {
         .should()
         .eq("[1,2,3]")
         .sum(@loc(), t);
+
+    let root_mut = doc..&.root_mut()..&;
+    root_mut
+        .array_push_json(alloc, "{\"name\":\"kern\"}")
+        .should_ok()
+        .sum(@loc(), t);
+    root_mut
+        .array_pop(alloc)
+        .should_ok()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    root_mut
+        .array_push_json(alloc, "4")
+        .should_ok()
+        .sum(@loc(), t);
+    root_mut
+        .array_remove(alloc, 1)
+        .should_ok()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    root_mut
+        .array_remove(alloc, 99)
+        .should_ok()
+        .sum(@loc(), t)
+        .not()
+        .should()
+        .sum(@loc(), t);
+    doc.&.as_json()
+        .should()
+        .eq("[1,3,4]")
+        .sum(@loc(), t);
+
+    doc
+        ..&.replace_root_json(alloc, "{\"a\":1,\"b\":2,\"c\":3}")
+        .should_ok()
+        .sum(@loc(), t);
+    let object_mut = doc..&.root_mut()..&;
+    object_mut
+        .object_set_json(alloc, "b", "[true,false]")
+        .should_ok()
+        .sum(@loc(), t);
+    object_mut
+        .object_append_json(alloc, "d\n", "\"escaped\"")
+        .should_ok()
+        .sum(@loc(), t);
+    object_mut
+        .object_remove(alloc, "a")
+        .should_ok()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    object_mut
+        .object_remove(alloc, "c")
+        .should_ok()
+        .sum(@loc(), t)
+        .should()
+        .sum(@loc(), t);
+    object_mut
+        .object_remove(alloc, "missing")
+        .should_ok()
+        .sum(@loc(), t)
+        .not()
+        .should()
+        .sum(@loc(), t);
+    doc.&.as_json()
+        .should()
+        .eq("{\"b\":[true,false],\"d\\n\":\"escaped\"}")
+        .sum(@loc(), t);
+
+    object_mut
+        .replace_string(alloc, "done")
+        .should_ok()
+        .sum(@loc(), t);
+    doc.&.as_json()
+        .should()
+        .eq("\"done\"")
+        .sum(@loc(), t);
 }
 
 // Runs the smoke suite as a Craft test target.

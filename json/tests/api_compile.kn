@@ -90,6 +90,12 @@ fn app() void!AppError {
     let mut doc = doc0;
     defer doc..&.deinit(alloc);
     _ = doc.&.root(alloc);
+    let root = doc..&.root_mut()..&;
+    root.object_set_json(alloc, "enabled", "false")
+        .map_err([](_: json.DocumentError) AppError {
+            return .{ Render: .{ Parse: .EmptyInput } };
+        })
+        .?;
     return .{ Ok: {} };
 }
 

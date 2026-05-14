@@ -54,14 +54,14 @@ incubator experiment with a redesigned public surface, not a file move.
 - [~] Implement an owned `Document` whose storage strategy is internal to the
   document. Current implementation owns compact JSON text and exposes borrowed
   root views.
-- [ ] Provide `DocumentValue` and `DocumentValueMut` handles for traversal and
+- [x] Provide `DocumentValue` and `DocumentValueMut` handles for traversal and
   mutation.
 - [x] Model allocation failures with structured errors, including capacity
   overflow where it is distinguishable.
-- [ ] Support builder-style mutation:
-  - object append/set/remove
-  - array push/pop/remove
-  - scalar replacement
+- [x] Support builder-style mutation:
+  - [x] object append/set/remove
+  - [x] array push/pop/remove
+  - [x] scalar replacement
 - [x] Keep cleanup handle-oriented: `document.deinit(alloc)`.
 
 ## Priority 3: Rendering And Writing
@@ -74,8 +74,8 @@ incubator experiment with a redesigned public surface, not a file move.
 
 ## Priority 4: Documentation And Tests
 
-- [~] README shows borrowed parsing, owned document cloning/replacement, and
-  rendering/writing. Fine-grained owned mutation is pending with the API.
+- [x] README shows borrowed parsing, owned document cloning/replacement,
+  rendering/writing, and compact-text mutation.
 - [x] Module docs teach ownership, duplicate-key policy, string decoding, and
   numeric strictness for the implemented modules.
 - [~] Public items need `///` contracts for allocation, borrowing, cleanup, and
@@ -90,8 +90,8 @@ incubator experiment with a redesigned public surface, not a file move.
   - [x] float errors
   - [x] duplicate-key first-match and duplicate rejection behavior
   - [x] streaming writer separators, escaping, and state errors
-  - [~] owned mutation and rendering; root replacement and rendering covered,
-    fine-grained mutation pending
+  - [x] owned mutation and rendering; root replacement, scalar replacement,
+    array push/pop/remove, and object append/set/remove covered
   - [x] README-shaped compile tests
 - [x] Add `json-test` as an in-repository extended conformance runner.
 - [x] Add `json-bench` as an in-repository benchmark runner.

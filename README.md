@@ -99,7 +99,14 @@ fn app(alloc: &mut base.mem.alloc.Allocator) void!AppError {
             return .{ Render: .{ Parse: .EmptyInput } };
         })
         .?;
-    defer doc..&.deinit(alloc);
+    let mut owned = doc;
+    defer owned..&.deinit(alloc);
+    let root_mut = owned..&.root_mut()..&;
+    root_mut.object_set_json(alloc, "enabled", "false")
+        .map_err([](_: json.DocumentError) AppError {
+            return .{ Render: .{ Parse: .EmptyInput } };
+        })
+        .?;
     return .{ Ok: {} };
 }
 
@@ -145,6 +152,8 @@ fn main() i32 {
 - `document.root(alloc)` returns a borrowed view over the owned compact storage.
 - `document.replace_root_json(alloc, text)` validates and replaces the whole
   document root.
+- `document.root_mut()` returns a compact-text mutation handle with scalar
+  replacement, array push/pop, and object append/set/remove helpers.
 
 String decoding is explicit: parsing validates JSON escape syntax, while
 `write_string`, `clone_string`, `write_key`, and `clone_key` decode Unicode

@@ -1,16 +1,30 @@
 //! Owned compact JSON document support.
 
+use base.coll.String;
+use base.io.Write;
 use base.mem.alloc.{AllocError, Allocator};
+use base.num.USIZE_MAX;
 
 use ..{
     Document,
     DocumentError,
+    DocumentValue,
+    DocumentValueMut,
+    ObjectEntry,
     ParseError,
     RenderError,
+    StringError,
     Value,
+    WriteError,
 };
 use ..parser.{parse_value, validate_value};
 use ..render.render_into;
+use ..builder.write_escaped_string;
+
+struct EntryRange {
+    start: usize,
+    end: usize,
+};
 
 // Preserves allocation failure shape in the document error domain.
 fn wrap_alloc_error(err: AllocError) DocumentError {
@@ -18,6 +32,175 @@ fn wrap_alloc_error(err: AllocError) DocumentError {
         .CapacityOverflow => .CapacityOverflow,
         .OutOfMemory => .OutOfMemory,
     };
+}
+
+// Lifts construction failures into the document mutation domain.
+fn wrap_write_error(err: WriteError) DocumentError {
+    return .{ Write: err };
+}
+
+// Lifts string/key decoding failures into the document mutation domain.
+fn wrap_string_error(err: StringError) DocumentError {
+    return .{ String: err };
+}
+
+// Replaces a byte range in compact document storage with already-validated JSON.
+fn replace_range(
+    storage: &mut String,
+    alloc: &mut Allocator,
+    start: usize,
+    end: usize,
+    replacement: &[u8],
+) void!DocumentError {
+    if (start > end or end > storage.len()) return .{ Err: .{ Parse: .UnexpectedEof } };
+
+    let current_len = storage.len();
+    let removed = end - start;
+    let suffix_len = current_len - end;
+    if (replacement.len() > USIZE_MAX - (current_len - removed)) {
+        return .{ Err: .CapacityOverflow };
+    }
+
+    let mut suffix = String.{};
+    let suffix_out = suffix
+        ..&.try_append_uninit_exact(alloc, suffix_len)
+        .map_err(wrap_alloc_error)
+        .?;
+    _ = suffix_out.copy_from(storage.as_str().&[end...current_len]);
+    defer suffix..&.deinit(alloc);
+
+    storage.truncate(start);
+    storage.try_push_str(alloc, replacement).map_err(wrap_alloc_error).?;
+    storage.try_push_str(alloc, suffix.&.as_str()).map_err(wrap_alloc_error).?;
+    return .{ Ok: {} };
+}
+
+// Builds one compact string fragment into `out`.
+fn build_string_fragment(
+    alloc: &mut Allocator,
+    mut out: &mut String,
+    text: &[u8],
+) void!DocumentError {
+    let mut writer = out.writer(alloc);
+    let sink = (writer..& as &mut Write);
+    write_escaped_string(sink, text).map_err(wrap_write_error).?;
+    return .{ Ok: {} };
+}
+
+// Validates and compacts a JSON fragment into `out`.
+fn build_compact_fragment(
+    alloc: &mut Allocator,
+    out: &mut String,
+    text: &[u8],
+) void!DocumentError {
+    return compact_into(out, alloc, text);
+}
+
+// Returns the insertion byte offset before a container's closing delimiter.
+fn before_closing(value: Value) usize {
+    return value.raw.len() - 1usize;
+}
+
+// Counts array elements and returns the last element range when present.
+fn array_tail(alloc: &mut Allocator, value: Value) (?Value)!DocumentError {
+    let .{ Some: mut cursor } = value.array() else {
+        return .{ Err: .{ Parse: .{ UnexpectedByte: 0 } } };
+    };
+    let mut last: ?Value = .None;
+    while (true) {
+        let next = cursor..&.next(alloc)
+            .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
+            .?;
+        let .{ Some: item } = next else return .{ Ok: last };
+        last = .{ Some: item };
+    }
+    return .{ Ok: last };
+}
+
+// Finds the array item at `index`.
+fn array_item_at(
+    alloc: &mut Allocator,
+    value: Value,
+    index: usize,
+) ?Value!DocumentError {
+    let .{ Some: mut cursor } = value.array() else {
+        return .{ Err: .{ Parse: .{ UnexpectedByte: 0 } } };
+    };
+    let mut i = 0usize;
+    while (true) {
+        let next = cursor
+            ..&.next(alloc)
+            .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
+            .?;
+        let .{ Some: item } = next else return .{ Ok: .None };
+        if (i == index) return .{ Ok: .{ Some: item } };
+        i += 1;
+    }
+    return .{ Ok: .None };
+}
+
+// Returns the byte range covering an array item, including its comma when present.
+fn array_item_range(value: Value, item: Value) EntryRange {
+    let item_start = (item.raw.ptr() as usize) - (value.raw.ptr() as usize);
+    let item_end = item_start + item.raw.len();
+    if (item_start > 1usize) return .{ start: item_start - 1usize, end: item_end };
+    if (item_end < value.raw.len() - 1usize) {
+        return .{ start: item_start, end: item_end + 1usize };
+    }
+    return .{ start: item_start, end: item_end };
+}
+
+// Finds an object entry by decoded key.
+fn object_find_entry(
+    alloc: &mut Allocator,
+    value: Value,
+    key: &[u8],
+) ?ObjectEntry!DocumentError {
+    let .{ Some: mut cursor } = value.object() else {
+        return .{ Err: .{ Parse: .{ UnexpectedByte: 0 } } };
+    };
+    while (true) {
+        let next = cursor
+            ..&.next(alloc)
+            .map_err([](err: ParseError) DocumentError { return .{ Parse: err }; })
+            .?;
+        let .{ Some: entry } = next else return .{ Ok: .None };
+        if (entry.&.key_eq(key).map_err(wrap_string_error).?) {
+            return .{ Ok: .{ Some: entry } };
+        }
+    }
+    return .{ Ok: .None };
+}
+
+// Returns the byte range covering the whole object entry, including its comma when present.
+fn object_entry_range(value: Value, entry: ObjectEntry) EntryRange {
+    let key_start = (entry.key_raw.ptr() as usize) - (value.raw.ptr() as usize);
+    let value_ptr = entry.value.raw.ptr() as usize;
+    let root_ptr = value.raw.ptr() as usize;
+    let value_start = value_ptr - root_ptr;
+    let value_end = value_start + entry.value.raw.len();
+    if (key_start > 1usize) return .{ start: key_start - 1usize, end: value_end };
+    if (value_end < value.raw.len() - 1usize) {
+        return .{ start: key_start, end: value_end + 1usize };
+    }
+    return .{ start: key_start, end: value_end };
+}
+
+// Builds `"key":value` as compact object entry text.
+fn build_object_entry_fragment(
+    alloc: &mut Allocator,
+    out: &mut String,
+    key: &[u8],
+    value_json: &[u8],
+) void!DocumentError {
+    let mut value_fragment = String.{};
+    defer value_fragment..&.deinit(alloc);
+    build_compact_fragment(alloc, value_fragment..&, value_json).?;
+
+    build_string_fragment(alloc, out, key).?;
+    out.try_push_str(alloc, ":").map_err(wrap_alloc_error).?;
+    out.try_push_str(alloc, value_fragment.&.as_str()).map_err(wrap_alloc_error).?;
+    return .{ Ok: {} };
 }
 
 /// Validates, compacts, and replaces document storage.
@@ -72,6 +255,11 @@ impl &Document {
         };
         return value;
     }
+
+    /// Returns an immutable handle for the root value.
+    pub fn root_value() DocumentValue {
+        return .{ raw: self.as_json() };
+    }
 }
 
 impl &mut Document {
@@ -89,5 +277,217 @@ impl &mut Document {
     /// Replaces the root with source JSON after validating and compacting it.
     pub fn replace_root_json(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
         return compact_into(self.storage..&, alloc, text);
+    }
+
+    /// Returns a mutable handle for the root value.
+    pub fn root_mut() DocumentValueMut {
+        return .{ document: self, start: 0, end: self.storage.&.len() };
+    }
+}
+
+impl DocumentValue {
+    /// Parses the handle range as a borrowed value.
+    pub fn value(alloc: &mut Allocator) Value {
+        let .{ Ok: value } = parse_value(alloc, self.raw) else {
+            @trap();
+        };
+        return value;
+    }
+}
+
+impl &mut DocumentValueMut {
+    /// Returns the current raw byte range for this handle.
+    pub fn raw() &[u8] {
+        return self.document.as_json().&[self.start...self.end];
+    }
+
+    /// Parses this handle as a borrowed value.
+    pub fn value(alloc: &mut Allocator) Value {
+        let .{ Ok: value } = parse_value(alloc, self.raw()) else {
+            @trap();
+        };
+        return value;
+    }
+
+    /// Replaces this value with compact JSON text.
+    pub fn replace_json(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
+        let mut fragment = String.{};
+        defer fragment..&.deinit(alloc);
+        build_compact_fragment(alloc, fragment..&, text).?;
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start,
+            self.end,
+            fragment.&.as_str(),
+        ).?;
+        self.end = self.start + fragment.&.len();
+        return .{ Ok: {} };
+    }
+
+    /// Replaces this value with JSON null.
+    pub fn replace_null(alloc: &mut Allocator) void!DocumentError {
+        return self.replace_json(alloc, "null");
+    }
+
+    /// Replaces this value with a JSON boolean.
+    pub fn replace_bool(alloc: &mut Allocator, value: bool) void!DocumentError {
+        if (value) return self.replace_json(alloc, "true");
+        return self.replace_json(alloc, "false");
+    }
+
+    /// Replaces this value with a JSON string after escaping `text`.
+    pub fn replace_string(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
+        let mut fragment = String.{};
+        defer fragment..&.deinit(alloc);
+        build_string_fragment(alloc, fragment..&, text).?;
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start,
+            self.end,
+            fragment.&.as_str(),
+        ).?;
+        self.end = self.start + fragment.&.len();
+        return .{ Ok: {} };
+    }
+
+    /// Appends a compact JSON value to this array.
+    pub fn array_push_json(alloc: &mut Allocator, text: &[u8]) void!DocumentError {
+        let value = self.value(alloc);
+        let .{ Some: _ } = value.array() else return .{ Err: .{ Parse: .{ UnexpectedByte: 0 } } };
+
+        let mut fragment = String.{};
+        defer fragment..&.deinit(alloc);
+        build_compact_fragment(alloc, fragment..&, text).?;
+
+        let insert = self.start + before_closing(value);
+        let mut joined = String.{};
+        defer joined..&.deinit(alloc);
+        if (value.raw.len() != 2usize) {
+            joined..&.try_push_str(alloc, ",").map_err(wrap_alloc_error).?;
+        }
+        joined..&.try_push_str(alloc, fragment.&.as_str()).map_err(wrap_alloc_error).?;
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            insert,
+            insert,
+            joined.&.as_str(),
+        ).?;
+        self.end += joined.&.len();
+        return .{ Ok: {} };
+    }
+
+    /// Removes and returns whether the last array item existed.
+    pub fn array_pop(alloc: &mut Allocator) bool!DocumentError {
+        let value = self.value(alloc);
+        let tail = array_tail(alloc, value).?;
+        let .{ Some: item } = tail else return .{ Ok: false };
+        let range = array_item_range(value, item);
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start + range.start,
+            self.start + range.end,
+            "",
+        ).?;
+        self.end -= range.end - range.start;
+        return .{ Ok: true };
+    }
+
+    /// Removes an array item by index and returns whether an item existed.
+    pub fn array_remove(alloc: &mut Allocator, index: usize) bool!DocumentError {
+        let value = self.value(alloc);
+        let item = array_item_at(alloc, value, index).?;
+        let .{ Some: item_value } = item else return .{ Ok: false };
+        let range = array_item_range(value, item_value);
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start + range.start,
+            self.start + range.end,
+            "",
+        ).?;
+        self.end -= range.end - range.start;
+        return .{ Ok: true };
+    }
+
+    /// Appends a key/value entry to this object.
+    pub fn object_append_json(
+        alloc: &mut Allocator,
+        key: &[u8],
+        value_json: &[u8],
+    ) void!DocumentError {
+        let value = self.value(alloc);
+        let .{ Some: _ } = value.object() else return .{ Err: .{ Parse: .{ UnexpectedByte: 0 } } };
+
+        let mut fragment = String.{};
+        defer fragment..&.deinit(alloc);
+        if (value.raw.len() != 2usize) {
+            fragment..&.try_push_str(alloc, ",").map_err(wrap_alloc_error).?;
+        }
+        build_object_entry_fragment(
+            alloc,
+            fragment..&,
+            key,
+            value_json,
+        ).?;
+
+        let insert = self.start + before_closing(value);
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            insert,
+            insert,
+            fragment.&.as_str(),
+        ).?;
+        self.end += fragment.&.len();
+        return .{ Ok: {} };
+    }
+
+    /// Sets `key` to `value_json`, appending it when the key is absent.
+    pub fn object_set_json(
+        alloc: &mut Allocator,
+        key: &[u8],
+        value_json: &[u8],
+    ) void!DocumentError {
+        let value = self.value(alloc);
+        let found = object_find_entry(alloc, value, key).?;
+        let .{ Some: entry } = found else return self.object_append_json(alloc, key, value_json);
+
+        let mut fragment = String.{};
+        defer fragment..&.deinit(alloc);
+        build_compact_fragment(alloc, fragment..&, value_json).?;
+        let entry_value_ptr = entry.value.raw.ptr() as usize;
+        let object_ptr = value.raw.ptr() as usize;
+        let local_start = entry_value_ptr - object_ptr;
+        let local_end = local_start + entry.value.raw.len();
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start + local_start,
+            self.start + local_end,
+            fragment.&.as_str(),
+        ).?;
+        self.end = self.end - (local_end - local_start) + fragment.&.len();
+        return .{ Ok: {} };
+    }
+
+    /// Removes `key` from this object and returns whether an entry was removed.
+    pub fn object_remove(alloc: &mut Allocator, key: &[u8]) bool!DocumentError {
+        let value = self.value(alloc);
+        let found = object_find_entry(alloc, value, key).?;
+        let .{ Some: entry } = found else return .{ Ok: false };
+        let range = object_entry_range(value, entry);
+        replace_range(
+            self.document.storage..&,
+            alloc,
+            self.start + range.start,
+            self.start + range.end,
+            "",
+        ).?;
+        self.end -= range.end - range.start;
+        return .{ Ok: true };
     }
 }

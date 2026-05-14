@@ -185,6 +185,16 @@ impl &DocumentError : Formatable {
                 err.&.write_to(writer);
                 _ = writer.write(")");
             },
+            .{ String: err } => {
+                _ = writer.write("json.DocumentError.String(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
+            .{ Write: err } => {
+                _ = writer.write("json.DocumentError.Write(");
+                err.&.write_to(writer);
+                _ = writer.write(")");
+            },
         }
     }
 }

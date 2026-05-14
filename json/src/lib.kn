@@ -129,6 +129,10 @@ pub enum DocumentError {
     Parse: ParseError,
     /// Rendering or replacement could not fit in the requested destination.
     Render: RenderError,
+    /// String/key decoding failed while locating a document field.
+    String: StringError,
+    /// JSON fragment construction failed during mutation.
+    Write: WriteError,
     /// Capacity arithmetic overflowed while growing owned storage.
     CapacityOverflow,
     /// The allocator could not satisfy an owned storage request.
@@ -206,6 +210,21 @@ pub struct Value {
 /// finer object/array mutation once the handle model is stable.
 pub struct Document {
     pub/ storage: String = String.{},
+};
+
+/// Immutable value handle tied to an owned document byte range.
+pub struct DocumentValue {
+    pub/ raw: &[u8],
+};
+
+/// Mutable value handle tied to an owned document byte range.
+///
+/// Mutating through this handle can move document storage. After a successful
+/// mutation, derived handles into the old document text must be reacquired.
+pub struct DocumentValueMut {
+    pub/ document: &mut Document,
+    pub/ start: usize,
+    pub/ end: usize,
 };
 
 /// Borrowed array cursor.
