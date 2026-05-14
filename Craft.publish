@@ -9,7 +9,7 @@ description = "JSON parsing and document utilities for Kern"
 license = "MIT"
 authors = ["softfault <givenyoung46@gmail.com>"]
 readme = "README.md"
-repository = "https://github.com/softfault/json-kern.git"
+repository = "https://github.com/kern-project/json-kern.git"
 
 [package.proof]
 manifest-sha256 = "sha256:ffdf813513d11f7375d56e5df9f6942ed893981b71e6392f5791a95bcf3f0b08"
