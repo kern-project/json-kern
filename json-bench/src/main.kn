@@ -55,7 +55,7 @@ impl &mut BenchInput {
 fn parse_iterations(text: &[u8]) usize {
     if (text.@len() == 0) return 0usize;
     let mut value = 0usize;
-    for (byte: text.iter()) {
+    for byte in text.iter() {
         if (byte < b'0' or byte > b'9') return 0usize;
         let next = value * 10 + (byte - b'0') as usize;
         if (next < value) return 0usize;
@@ -177,7 +177,7 @@ fn bench_parse(
 ) bool {
     let mut sink = 0usize;
     let start = time.monotonic().now();
-    for (_: 0usize...iterations) {
+    for _ in 0usize...iterations {
         let .{ Ok: value } = text.parse_json(alloc) else return false;
         sink += value.raw.@len();
         sink += match (value.kind) {
@@ -209,7 +209,7 @@ fn bench_validate(
 ) bool {
     let mut sink = 0usize;
     let start = time.monotonic().now();
-    for (_: 0usize...iterations) {
+    for _ in 0usize...iterations {
         let .{ Ok: _ } = text.validate_json(alloc) else return false;
         sink += text.@len();
     }
@@ -235,7 +235,7 @@ fn bench_compact(
     if (text.@len() > out.@len()) return false;
     let mut sink = 0usize;
     let start = time.monotonic().now();
-    for (_: 0usize...iterations) {
+    for _ in 0usize...iterations {
         let .{ Ok: written } = text.render_json_compact(
             alloc,
             out..&[0...out.@len()],
@@ -263,7 +263,7 @@ fn bench_lookup(
     let mut sink = 0usize;
     let .{ Ok: root } = text.parse_json(alloc) else return false;
     let start = time.monotonic().now();
-    for (_: 0usize...iterations) {
+    for _ in 0usize...iterations {
         let .{ Some: mut object0 } = root.object() else return false;
         let object = object0..&;
         let .{ Ok: found } = object.find(alloc, "meta") else return false;
@@ -292,7 +292,7 @@ fn bench_decode(
     if (needed > out.@len()) return false;
     let mut sink = 0usize;
     let start = time.monotonic().now();
-    for (_: 0usize...iterations) {
+    for _ in 0usize...iterations {
         let .{ Ok: written } = value.write_string(out..&[0...out.@len()]) else return false;
         sink += written;
     }

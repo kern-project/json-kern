@@ -110,7 +110,7 @@ fn parse_exp(text: &[u8], start: usize) i32!NumberError {
     }
 
     let mut exp = 0i32;
-    for (byte: text.&[i...text.@len()].iter()) {
+    for byte in text.&[i...text.@len()].iter() {
         if (exp < 10000) {
             exp = exp * 10 + ((byte - b'0') as i32);
         }

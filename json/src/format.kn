@@ -1,6 +1,6 @@
 //! Diagnostic formatting and exact equality implementations for JSON errors.
 
-use base.io.{Formatable, Write};
+use base.io.{FormatSpec, Formatable, Write};
 
 use ..{
     DocumentError,
@@ -62,7 +62,8 @@ impl ParseError {
 
 impl &ParseError : Formatable {
     /// Writes a stable diagnostic name for the parse error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .EmptyInput => _ = writer.write("json.ParseError.EmptyInput"),
             .{ UnexpectedByte: offset } => {
@@ -95,7 +96,8 @@ impl &ParseError : Formatable {
 
 impl &ParseLocation : Formatable {
     /// Writes a stable line/column diagnostic location.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         _ = "byte {}, line {}, column {}".fmt(.{
             self.offset,
             self.line,
@@ -106,7 +108,8 @@ impl &ParseLocation : Formatable {
 
 impl &NumberError : Formatable {
     /// Writes a stable diagnostic name for the number error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .NotNumber => _ = writer.write("json.NumberError.NotNumber"),
             .{ InvalidNumber: offset } => {
@@ -119,7 +122,8 @@ impl &NumberError : Formatable {
 
 impl &StringError : Formatable {
     /// Writes a stable diagnostic name for the string error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .NotString => _ = writer.write("json.StringError.NotString"),
             .{ InvalidEscape: offset } => {
@@ -137,7 +141,8 @@ impl &StringError : Formatable {
 
 impl &KeyError : Formatable {
     /// Writes a stable diagnostic name for the key lookup error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .{ Parse: err } => {
                 _ = writer.write("json.KeyError.Parse(");
@@ -156,7 +161,8 @@ impl &KeyError : Formatable {
 
 impl &RenderError : Formatable {
     /// Writes a stable diagnostic name for the render error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .ShortOutput => _ = writer.write("json.RenderError.ShortOutput"),
             .WriteFailed => _ = writer.write("json.RenderError.WriteFailed"),
@@ -171,7 +177,8 @@ impl &RenderError : Formatable {
 
 impl &DocumentError : Formatable {
     /// Writes a stable diagnostic name for the document error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .CapacityOverflow => _ = writer.write("json.DocumentError.CapacityOverflow"),
             .OutOfMemory => _ = writer.write("json.DocumentError.OutOfMemory"),
@@ -201,7 +208,8 @@ impl &DocumentError : Formatable {
 
 impl &WriteError : Formatable {
     /// Writes a stable diagnostic name for the JSON construction error.
-    pub fn write_to(writer: &mut Write) void {
+    pub fn write_fmt(spec: FormatSpec, writer: &mut Write) void {
+        _ = spec;
         match (self.*) {
             .CapacityOverflow => _ = writer.write("json.WriteError.CapacityOverflow"),
             .OutOfMemory => _ = writer.write("json.WriteError.OutOfMemory"),
